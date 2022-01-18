@@ -1,0 +1,23 @@
+{
+    "token": "token",
+    "modules": {
+        "logger": {
+            "main": "%main",
+            "log_path": null,
+            "logger_payloads": [
+                ["primary", "DEBUG", "logs/primary.log", true, true, true],
+                ["commands", "DEBUG", "logs/commands.log", false, false, true],
+                ["database", "DEBUG", "logs/database.log", false, false, true]
+            ]
+        },
+        "sqlapi": {
+            "main": "%main",
+            "connector": "mysql+aiomysql://user:password@address:port/database",
+            "modelspath": "/path/to/models.py",
+            "debug": true
+        },
+        "sqlcache": {
+            "main": "%main"
+        }
+    }
+}
