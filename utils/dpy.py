@@ -1,3 +1,6 @@
+from collections import _OrderedDictValuesView
+from curses import wrapper
+from typing_extensions import Self
 from discord.ext import commands
 import asyncio
 
@@ -6,38 +9,93 @@ class TaskManager(object):
         self.main = main
         self.cog = cls
         self.helper = helper
-        # self.commands = cls.__cog_commands__
-        self.startup_funcs = []
-        self.start_funcs_inited = False
-        self.gather_init_funcs()
-    
         
-    def run_inits(self):
-        for func in self.startup_funcs:
-            func()
-
-    def gather_init_funcs(self):
+        self.startup_funcs = []
+        self.start_funcs_called = False
+        self.instance = None
+        
+        self.get_start_funcs()
+        # print(self.startup_funcs)
+        self.wrap_new()
+    
+    def get_start_funcs(self):
         for attr in dir(self.cog):
             attr = getattr(self.cog, attr, None)
             if(res := getattr(attr, "init_func", None)):
                 if(res):
                     self.startup_funcs.append(attr)
-    
+
+    def wrap_new(self):
+        og = self.cog.__new__
+        
+            
+        
+        async def wrapper(cls, *args, **kwargs):
+            instance =  await og(cls, *args, **kwargs) # aobject
+            self.instance = instance
+            
+            for func in self.startup_funcs:
+                ogfunc = getattr(instance, func.__name__)
+                
+                def arg_wrapper(func): # This is retarded
+                    async def func_wrapper(*args, **kwargs):
+                        await func(*args, **kwargs) #im lazy
+                        
+                        af = True
+                        for i, startup_func in enumerate(self.startup_funcs):
+                            if(func.__name__ == startup_func[0].__name__):
+                                self.startup_funcs[i][1] = True
+                            if(not startup_func[1]):
+                                af = False
+                        if(af):
+                            self.start_funcs_called = True
+                        
+                    return func_wrapper
+                    
+                func = arg_wrapper(ogfunc)
+                func.__name__ = ogfunc.__name__
+                func.init_func = ogfunc.init_func
+                for i, startup_func in enumerate(self.startup_funcs):
+                    if(isinstance(startup_func, list)):
+                        continue
+                    if(startup_func.__name__ == func.__name__):
+                        self.startup_funcs[i] = [func, False] # l[1] is status if executed
+                self.helper.start_funcs[func.init_func[1]] = func # bind method to __self__
+            
+            return instance
+        
+        self.cog.__new__ = wrapper
+        
+    # planning to add scheduled tasks here
+
+
+
+# Independent object responsible for setting up Cogs and setting up their schedules
+# Uses some main attributes, use setup() to setup
+# ASSUMES EACH COG ONLY HAS 1 INSTANCE    
 class SetupHelper(object):
 
     def __init__(self, main) -> None:
         self.main = main
-        self.tasks = []
+        self.task_managers = []
+        self.start_funcs = {}
+        
+        self.last_arg = 0
         
         og = self.main.client.on_ready
         async def wrap_client_on_ready(*args, **kwargs):
             await og(*args, **kwargs)
-            for taskmanager in self.tasks:
-                funcs = taskmanager.startup_funcs
-                for func in funcs:
-                    await func()
-                taskmanager.start_funcs_inited = True
-                self.main.primary.debug("Init function on cog '{}' executed".format(taskmanager.cog.name))
+            print(self.start_funcs)
+            order = sorted(list(self.start_funcs.keys()))
+            for i in order:
+                func = self.start_funcs[i]
+                await func()
+            # for taskmanager in self.tasks:
+            #     funcs = taskmanager.startup_funcs
+            #     for func in funcs:
+            #         await func()
+            #     taskmanager.start_funcs_inited = True
+            #     self.main.primary.debug("Init function on cog '{}' executed".format(taskmanager.cog.name))
             
         
         self.main.client.on_ready  = wrap_client_on_ready
@@ -69,9 +127,9 @@ class SetupHelper(object):
         return wrapper
 
     def attach_task_manager(self, cls):
-        instance = TaskManager(cls, self.main, self)
-        cls.task_manager = instance
-        self.tasks.append(instance)
+        if(not (instance := getattr(cls, "task_manager", None))):
+            instance = TaskManager(cls, self.main, self)
+            cls.task_manager = instance
         return cls
 
 
@@ -79,10 +137,13 @@ class SetupHelper(object):
         # my code is flawless shut up
         if(not isinstance(arg, int)):
             func = arg
-            func.init_func = True
+            nums = list(self.start_funcs.keys())
+            nums.append(self.last_arg + 1)
+            self.last_arg += 1 
+            func.init_func = [True, max(nums)]
             return func
         def wrapper(func):
-            func.init_func = True
+            func.init_func = [True, arg]
             return func
         return wrapper
 
@@ -99,4 +160,4 @@ class SetupHelper(object):
         
 def setup(main):
     global setuphelper
-    setuphelper = SetupHelper(main) 
+    setuphelper = SetupHelper(main)
