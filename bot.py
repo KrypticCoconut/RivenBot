@@ -7,6 +7,9 @@ import discord
 from discord.ext import commands
 import asyncio
 
+
+from utils.dpy import setup
+
 class Cog(object):
     def __init__(self, cog, globals, commands, instance, parent) -> None:
         super().__init__()
@@ -111,6 +114,7 @@ class Main(object):
         cog_obj = Cog(cog, cog_globals, command_objs, instance, parent)
         self.cogs[cog.name] = cog_obj
         self.client.add_cog(instance)
+        await self.primary.debug("Loaded cog '{}'".format(cog.name))
         return True, False, cog_obj
     
     async def load_cogs(self, cog_dir, parent):
@@ -171,7 +175,12 @@ class Main(object):
         client = commands.Bot(command_prefix="!")
         self.client = client
         
-        await self.load_module(os.path.join(self.pwd, mod_dir, "logger.py"))
+        @self.client.event
+        async def on_ready():
+            await self.primary.debug("Bot started")
+        
+        setup(main) # initialize dpy object for cog loading
+        
         await self.load_modules(mod_dir)
         await self.load_cogs(cog_dir, None)
          
@@ -183,9 +192,8 @@ class Main(object):
                     command.globals[name] = object
         del self.injects
         
-        @self.client.event
-        async def on_ready():
-            self.primary.debug("Bot started")
+        
+        # print(self.client.on_ready)
         await self.client.start(main.config["token"])
 
     

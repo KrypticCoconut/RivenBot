@@ -14,10 +14,13 @@ class Greetings(aobject, commands.Cog):
     
     @setuphelper.init_func
     async def start():
+        # no command can be executed before the start function starts, assuming it has a blocker atached to it
+        return
+    
         # print("start")
         # await asyncio.sleep(5)
         # print("end")
-        pass
+
         
 COG = Greetings
 GLOBALS = globals()
