@@ -43,14 +43,14 @@ class SqlalchemyAPI(aobject):
         if(debug):
             await self.sync_tables()
             
-        # async def create_random(i):
-        #     async with self.session.begin():
-        #         server = self.tables["servers"](server_id=i, prefix="!", rivensettings = self.tables["rivensettings"](server_id=i, notify=True))
-        #         data = await self.deserialize_object(server)
-        #         self.session.add(server)
+        async def create_random(i):
+            async with self.session.begin():
+                server = self.tables["servers"](server_id=i, prefix="!", rivensettings = self.tables["rivensettings"](server_id=i, notify=True))
+                data = await self.deserialize_object(server)
+                self.session.add(server)
         
-        # for i in range(1,5):
-        #     await create_random(i)
+        for i in range(1,5):
+            await create_random(i)
         # stmt = select(self.tables["servers"]).where(self.tables["servers"].server_id == 1)
         # obj = await self.query(stmt, first=True, deserialize=False)
         # data  = await self.deserialize_object(obj)

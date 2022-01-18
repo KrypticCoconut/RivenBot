@@ -1,4 +1,5 @@
 
+from linecache import cache
 from utils.misc import aobject
 import asyncio
 from sqlalchemy.future import select
@@ -107,7 +108,7 @@ class SqlCache(aobject):
                     
                     setattr(result, name, nval)
                 
-                await self.main.all_loggers["database"][0].debug("Change row with primary key {} in table {} from {} to {}".format(primary_key, self.table_name, cdict, ndict))
+                await self.main.all_loggers["database"][0].debug("Changed row with primary key {} in table {} from {} to {}".format(primary_key, self.table_name, cdict, ndict))
                     
             else:
                 session.add(self.sqlapi.serialize_dict(conf, self.table_name))
@@ -121,15 +122,19 @@ class SqlCacheParent(aobject):
         self.caches = {}
         
         for table in list(main.sqlapi.tables.values()):
+            if(getattr(table, "hidden", None)):
+                continue
             self.caches[table.__tablename__] = await SqlCache(self.main, table, cachelen=2)
             
         # await self.caches["servers"].get_row(1)
         # await self.caches["servers"].get_row(2)
-        # # self.caches["servers"].cache[1]["prefix"] = "@"
-        # print(self.caches["servers"].head.next.val)
-        # await self.caches["servers"].get_row(1)
-        # print(self.caches["servers"].head.next.val)
+        
+        # def ret():
+        #     return self.caches["servers"].cache[1]
+        # ret()["prefix"] = "@"
+        # await self.caches["servers"].get_row(3)
         self.main.caches = self.caches
+        self.main.inject_globals("caches", cache)
 
 MOD = SqlCacheParent
 NAME = "sqlcache"
