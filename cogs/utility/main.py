@@ -12,16 +12,16 @@ class Greetings(aobject, commands.Cog):
         self.client = client
         self.main = main
     
-    @setuphelper.init_func(1) # 1 is the priority, lesser priority = faster starting
-    async def start(self):
-        # will be ran first
-        await asyncio.sleep(5)
-        # no command can be executed before the start function starts, assuming it has a blocker atached to it
+    # @setuphelper.init_func(1) # 1 is the priority, lesser priority = faster starting
+    # async def start(self):
+    #     # will be ran first
+    #     await asyncio.sleep(5)
+    #     # no command can be executed before the start function starts, assuming it has a blocker atached to it
 
-    @setuphelper.init_func(2)
-    # will be ran 2nd
-    async def start2(self):
-        print("second")
+    # @setuphelper.init_func(2)
+    # # will be ran 2nd
+    # async def start2(self):
+    #     print("second")
 
         
 COG = Greetings

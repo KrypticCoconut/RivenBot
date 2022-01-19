@@ -43,7 +43,7 @@ Base = declarative_base()
 class RivenSettings(Base):
     __tablename__ = "rivensettings"
     server_id = Column(Integer, ForeignKey("servers.server_id"), primary_key=True, nullable=False)
-    notify = Column(Boolean)
+    notify = Column(Boolean, nullable=False, default=False)
 
     
     
@@ -51,7 +51,7 @@ class RivenSettings(Base):
 class Servers(Base):
     __tablename__ = "servers"
     server_id = Column(Integer, primary_key=True, nullable=False)
-    prefix = Column(String(4))
+    prefix = Column(String(4), nullable=True, default=None)
     rivensettings = relationship("RivenSettings", uselist=False, lazy="noload") # use .options(selectinload(Servers.rivensettings)) to load relation
     
     
@@ -74,7 +74,7 @@ class ServersSchema(Schema):
     def make_user(self, data, **kwargs):
         return Servers(**data)
     
-    
+
 models = [
     [Servers, ServersSchema],
     [RivenSettings, RivenSettingsSchema]
