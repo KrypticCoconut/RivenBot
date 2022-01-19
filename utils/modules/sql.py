@@ -4,7 +4,6 @@ import sys
 import os
 import asyncio
 import importlib
-sys.path.append("/home/krypt/Projects/RivenBot")
 
 from utils.misc import aobject
 

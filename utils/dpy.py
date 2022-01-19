@@ -3,6 +3,7 @@ from curses import wrapper
 from typing_extensions import Self
 from discord.ext import commands
 import asyncio
+import discord
 
 class TaskManager(object):
     def __init__(self, cls, main, helper) -> None:
@@ -15,7 +16,6 @@ class TaskManager(object):
         self.instance = None
         
         self.get_start_funcs()
-        # print(self.startup_funcs)
         self.wrap_new()
     
     def get_start_funcs(self):
@@ -48,6 +48,7 @@ class TaskManager(object):
                             if(not startup_func[1]):
                                 af = False
                         if(af):
+                            await self.main.primary.debug("All start_funcs for Cog '{}' were called".format(self.cog.name))
                             self.start_funcs_called = True
                         
                     return func_wrapper
@@ -83,12 +84,15 @@ class SetupHelper(object):
         self.last_arg = 0
         
         og = self.main.client.on_ready
+        
+        
         async def wrap_client_on_ready(*args, **kwargs):
+            await self.main.primary.debug("Running Cog start_funcs in order")
             await og(*args, **kwargs)
-            print(self.start_funcs)
             order = sorted(list(self.start_funcs.keys()))
             for i in order:
                 func = self.start_funcs[i]
+                await self.main.primary.debug("Running {}".format(func))
                 await func()
             # for taskmanager in self.tasks:
             #     funcs = taskmanager.startup_funcs
@@ -123,7 +127,6 @@ class SetupHelper(object):
             await self.main.all_loggers["commands"][0].debug("command '{}' requested by user '{}'".format(method.__name__, _ctx.author.id))
             await method(*args, **kwargs)
         wrapper.__name__ = method.__name__
-        # print("wrapper")
         return wrapper
 
     def attach_task_manager(self, cls):
@@ -151,8 +154,9 @@ class SetupHelper(object):
         async def wrapper(*args, **kwargs):
             _self  = args[0]
             _ctx = args[1] 
-            if(not _self.task_manager.start_funcs_inited):
-                print("Not Inited!")
+            if(not _self.task_manager.start_funcs_called):
+                embed=discord.Embed(title="Category not loaded", description="please wait the the command category gets loaded!", color=0xff0000)
+                await _ctx.send(embed=embed)
             else:
                 await method(*args, **kwargs)
         wrapper.__name__ = method.__name__
