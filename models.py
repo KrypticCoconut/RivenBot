@@ -5,6 +5,7 @@ from sqlalchemy import DateTime
 from sqlalchemy import ForeignKey
 from sqlalchemy import Integer
 from sqlalchemy import String
+from sqlalchemy import BigInteger
 from sqlalchemy.orm import relationship, backref
 from marshmallow import Schema, fields, post_load
 
@@ -42,7 +43,8 @@ Base = declarative_base()
 
 class RivenSettings(Base):
     __tablename__ = "rivensettings"
-    server_id = Column(Integer, ForeignKey("servers.server_id"), primary_key=True, nullable=False)
+    cachelen = 2
+    server_id = Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True, nullable=False)
     notify = Column(Boolean, nullable=False, default=False)
 
     
@@ -50,7 +52,8 @@ class RivenSettings(Base):
 
 class Servers(Base):
     __tablename__ = "servers"
-    server_id = Column(Integer, primary_key=True, nullable=False)
+    cachelen = 2
+    server_id = Column(BigInteger, primary_key=True, nullable=False)
     prefix = Column(String(4), nullable=True, default=None)
     rivensettings = relationship("RivenSettings", uselist=False, lazy="noload") # use .options(selectinload(Servers.rivensettings)) to load relation
     
@@ -67,7 +70,7 @@ class RivenSettingsSchema(Schema):
     
 class ServersSchema(Schema):
     server_id = fields.Int()
-    prefix = fields.Str()
+    prefix = fields.Str(allow_none=True)
     rivensettings = fields.Nested(RivenSettingsSchema)
     
     @post_load

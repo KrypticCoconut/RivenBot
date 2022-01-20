@@ -2,6 +2,7 @@
 import json
 import os
 import importlib
+from pydoc import cli
 
 import discord
 from discord.ext import commands
@@ -171,8 +172,18 @@ class Main(object):
                 
         self.modules_loaded = True
     
+    async def attach_prefix(self):
+        async def get_prefix(ctx, message):
+            conf = await self.caches["servers"].get_row(message.guild.id, "servers")
+            prefix = conf["prefix"]
+            if(not prefix):
+                prefix = ctx.user.mention
+            return prefix
+        
+        self.client.command_prefix = get_prefix
+    
     async def start(self, cog_dir, mod_dir):
-        client = commands.Bot(command_prefix="!")
+        client = commands.Bot(command_prefix=None) # None is temp
         self.client = client
         
         @self.client.event
@@ -183,6 +194,8 @@ class Main(object):
         
         await self.load_modules(mod_dir)
         await self.load_cogs(cog_dir, None)
+        
+        await self.attach_prefix()
          
         #shut up im good at coding
         for name, object in self.injects.items():

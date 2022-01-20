@@ -58,27 +58,10 @@ class SqlalchemyAPI(aobject):
             self.schemas[table.__tablename__] = schema()
         
         self.engine = create_async_engine(connector)
-        self.session = sessionmaker(self.engine, expire_on_commit=False, class_= AsyncSession)()
-        
+        self.session_maker = sessionmaker(self.engine, class_= AsyncSession, expire_on_commit=False)
+        self.session = self.session_maker()
         if(debug):
             await self.sync_tables()
-            
-        async def create_random(i):
-            server = self.tables["servers"](server_id=i, prefix="!", rivensettings = self.tables["rivensettings"](server_id=i, notify=True))
-            data = await self.deserialize_object(server)
-            await self.queue.add(self.add_obj, [server])
-            # result = await self.queue.add(self.query_obj, [select(self.tables["servers"]).where(self.tables["servers"].server_id == i)])
-            # print(result.scalars().first())
-        
-        for i in range(1,5):
-            await create_random(i)
-        # stmt = select(self.tables["servers"]).where(self.tables["servers"].server_id == 1)
-        # obj = await self.query(stmt, first=True, deserialize=False)
-        # data  = await self.deserialize_object(obj)
-        # print(obj.rivensettings)
-        # obj.rivensettings.notify = False
-        # await self.session.commit()
-        # print(await self.query(stmt, first=True, deserialize=True))
 
     async def sync_tables(self):
         async with self.engine.begin() as conn:
@@ -104,6 +87,7 @@ class SqlalchemyAPI(aobject):
     async def query_obj(self, stmt):
         async with self.session.begin():
             results = await self.session.execute(stmt)
+        await self.session.commit()
         return results
     
     async def add_obj(self, object):
@@ -112,9 +96,10 @@ class SqlalchemyAPI(aobject):
                 self.session.add_all(object)
             else:
                 self.session.add(object)
-    
-    async def add(self, obj):
-        self.session
+        await self.session.commit()
+        
+    async def expire(self, obj):
+        self.session.expire(obj)
         
 
 MOD = SqlalchemyAPI

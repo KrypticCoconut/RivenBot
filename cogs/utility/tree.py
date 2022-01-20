@@ -33,7 +33,7 @@ async def tree(self, ctx):
     t.show()
     sys.stdout = old_stdout
 
-    # print(mystdout.getvalue())
+    val = mystdout.getvalue()
     
 COMMAND = tree
 GLOBALS = globals()
