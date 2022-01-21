@@ -101,6 +101,10 @@ class SqlalchemyAPI(aobject):
     async def expire(self, obj):
         self.session.expire(obj)
         
+    async def closing_func(self):
+        await self.session.close()
+        await self.engine.dispose()
+        
 
 MOD = SqlalchemyAPI
 NAME = "sqlapi"

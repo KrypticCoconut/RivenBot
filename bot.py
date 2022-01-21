@@ -3,6 +3,7 @@ import json
 import os
 import importlib
 from pydoc import cli
+from sys import prefix
 
 import discord
 from discord.ext import commands
@@ -161,6 +162,7 @@ class Main(object):
         mod_dir = os.path.join(self.pwd, mod_dir)
         self.mod_dir = mod_dir
         order = json.load(open(os.path.join(mod_dir, "load_order.json"), "r"))
+        self.mod_order = order
         
         for file in order:
             file = file + ".py"
@@ -173,15 +175,31 @@ class Main(object):
         self.modules_loaded = True
     
     async def attach_prefix(self):
+
         async def get_prefix(ctx, message):
             conf = await self.caches["servers"].get_row(message.guild.id, "servers", conf={})
-            prefix = conf["prefix"]
-            if(not prefix):
-                prefix = ctx.user.mention
+            prefix =  commands.when_mentioned(ctx, message) + [conf["prefix"]]
             return prefix
         
+        
+
         self.client.command_prefix = get_prefix
     
+    async def close(self):
+        await self.setup_helper.call_close_funcs()
+        await self.primary.debug("Running Module close functions")
+        for module in self.mod_order[::-1]: # call them in reverse order because dependent mods were loaded first so they should be unloaded last
+            name = module
+            module = self.modules[module]
+            f = getattr(module, "closing_func", None)
+            if(f):
+                await self.primary.debug("Running closing func for module '{}'".format(name))
+                await f()
+                
+        await self.client.close()
+
+                
+        
     async def start(self, cog_dir, mod_dir):
         client = commands.Bot(command_prefix=None) # None is temp
         self.client = client
@@ -190,7 +208,7 @@ class Main(object):
         async def on_ready():
             await self.primary.debug("Bot started")
         
-        setup(self) # initialize dpy object for cog loading
+        self.setup_helper = setup(self) # initialize dpy object for cog loading
         
         await self.load_modules(mod_dir)
         await self.load_cogs(cog_dir, None)
@@ -205,8 +223,11 @@ class Main(object):
                     command.globals[name] = object
         del self.injects
         
-
-        await self.client.start(self.config["token"])
+        try:
+            await self.client.start(self.config["token"])
+        except:
+            await self.close()
+        await self.primary.debug("Client Closed")
     
         
     def inject_globals(self, name, object):

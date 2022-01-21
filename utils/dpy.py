@@ -13,15 +13,12 @@ class TaskManager(object):
         
         self.startup_funcs = []
         self.start_funcs_called = False
+        self.get_start_funcs()
         
         self.closing_funcs = []
+        self.get_close_funcs()
         
         self.instance = None
-        
-        
-        
-        self.get_start_funcs()
-        # self.get_close_funcs()
         self.wrap_new()
 
         
@@ -52,6 +49,10 @@ class TaskManager(object):
             instance =  await og(cls, *args, **kwargs) # aobject
             self.instance = instance
             
+            for func in self.closing_funcs:
+                func = getattr(instance, func.__name__)
+                self.helper.close_funcs[func.close_func] = func
+            
             for func in self.startup_funcs:
                 ogfunc = getattr(instance, func.__name__)
                 
@@ -79,7 +80,7 @@ class TaskManager(object):
                         continue
                     if(startup_func.__name__ == func.__name__):
                         self.startup_funcs[i] = [func, False] # l[1] is status if executed
-                self.helper.start_funcs[func.init_func[1]] = func # bind method to __self__
+                self.helper.start_funcs[func.init_func] = func # bind method to __self__
             
             return instance
         
@@ -98,6 +99,7 @@ class SetupHelper(object):
         self.main = main
         self.task_managers = []
         self.start_funcs = {}
+        self.close_funcs = {}
         
         self.last_arg = 0
         
@@ -138,14 +140,14 @@ class SetupHelper(object):
         return wrapper
     
     
-    def notifier(self, method):
-        async def wrapper(*args, **kwargs):
-            _self  = args[0] # self is arg 0
-            _ctx = args[1] # context is arg 1
-            await self.main.all_loggers["commands"][0].debug("command '{}' requested by user '{}'".format(method.__name__, _ctx.author.id))
-            await method(*args, **kwargs)
+    def notifier(self, commandcls):
+        method = commandcls._callback
+        async def wrapper(self, ctx, *args):
+            await self.main.all_loggers["commands"][0].debug("command '{}' requested by user '{}'".format(method.__name__, ctx.author.id))
+            await method(self, ctx, *args)
         wrapper.__name__ = method.__name__
-        return wrapper
+        commandcls._callback = wrapper
+        return commandcls
 
     def attach_task_manager(self, cls):
         if(not (instance := getattr(cls, "task_manager", None))):
@@ -161,25 +163,48 @@ class SetupHelper(object):
             nums = list(self.start_funcs.keys())
             nums.append(self.last_arg + 1)
             self.last_arg += 1 
-            func.init_func = [True, max(nums)]
+            func.init_func = max(nums)
             return func
         def wrapper(func):
-            func.init_func = [True, arg]
+            func.init_func = arg
+            return func
+        return wrapper
+    
+    def close_func(self, arg):
+        # my code is flawless shut up
+        if(not isinstance(arg, int)):
+            func = arg
+            nums = list(self.close_funcs.keys())
+            nums.append(self.last_arg + 1)
+            self.last_arg += 1 
+            func.close_func = max(nums)
+            return func
+        def wrapper(func):
+            func.close_func = arg
             return func
         return wrapper
 
-    def attach_blocker(self, method):
-        async def wrapper(*args, **kwargs):
-            _self  = args[0]
-            _ctx = args[1] 
-            if(not _self.task_manager.start_funcs_called):
+    def attach_blocker(self, commandcls):
+        method = commandcls._callback
+        async def wrapper(self, ctx, *args):
+            if(not self.task_manager.start_funcs_called):
                 embed=discord.Embed(title="Category not loaded", description="please wait the the command category gets loaded!", color=0xff0000)
-                await _ctx.send(embed=embed)
+                await ctx.send(embed=embed)
             else:
-                await method(*args, **kwargs)
+                await method(self, ctx, *args)
         wrapper.__name__ = method.__name__
-        return wrapper
-        
+        commandcls._callback = wrapper
+        return commandcls
+    
+    async def call_close_funcs(self):
+        await self.main.primary.debug("Running Cog close functions in order")
+        order = sorted(list(self.close_funcs.keys()))
+        for i in order:
+            func = self.close_funcs[i]
+            await self.main.primary.debug("Running {}".format(func))
+            await func()
+    
 def setup(main):
     global setuphelper
     setuphelper = SetupHelper(main)
+    return setuphelper

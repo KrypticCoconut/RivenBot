@@ -57,7 +57,12 @@ class LoggerParent(aobject):
             streamhandler.formatter = formatter
             logger.add_handler(streamhandler)
 
+
         if(Filehandler):
+            if(not os.path.exists(os.path.dirname(filename))):
+                create_dir_path(filename)
+            else:
+                open(filename, 'w').close() #flawless
             filehandler = AsyncFileHandler(os.path.join(self.log_path, filename))
             filehandler.level = logginglevel
             filehandler.formatter = formatter
@@ -71,8 +76,7 @@ class LoggerParent(aobject):
         else:
             await self.primary.debug("Logger created with with args {}".format(args))
             
-        if(not os.path.exists(os.path.dirname(filename))):
-            create_dir_path(filename)
+
         self.all_loggers[name] = [logger, filename]
     
         

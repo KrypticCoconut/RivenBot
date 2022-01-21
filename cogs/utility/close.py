@@ -8,7 +8,7 @@ from discord.ext.commands import has_permissions
 
 async def close(self, ctx):
     if(ctx.author.id in self.main.config["admins"]):
-        self.main.close()
+        await self.main.close()
         
     
 COMMAND = close

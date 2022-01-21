@@ -46,16 +46,22 @@ class Greetings(aobject, commands.Cog):
         self.main = main
     
     @setuphelper.init_func 
-    async def start(self):
+    async def start_func(self):
         tree = get_tree(self)
         self.tree_embed = embed=discord.Embed(title="Tree view of commands", description="```\n{}\n```".format(tree))
 
-
-    # @setuphelper.init_func(2)
-    # # will be ran 2nd
+    # @setuphelper.init_func(1)
+    # init funcs are ran as of priority, so any init func with priority less than 1 will be ran before this
+    # If you dont specify the priortiy and use it like <@setuphelper.init_func> then the function will be placed on the lowest priority
     # async def start2(self):
-    #     print("second")
+    #     await asyncio.sleep(5) # all commands with a blocker attached to them wont be able to run before this sleep ends.
 
-        
+
+    # @setuphelper.close_func
+    # closing funcs are called when the bot is closing
+    # same priority concept as init funcs
+    # async def close_func(self):
+    #     print("Closing")
+
 COG = Greetings
 GLOBALS = globals()

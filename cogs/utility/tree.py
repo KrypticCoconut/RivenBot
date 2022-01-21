@@ -4,9 +4,9 @@ import discord
 
 
 @setuphelper.helpargs(name="tree", desc="!tree")
-@commands.command()
 @setuphelper.attach_blocker
 @setuphelper.notifier
+@commands.command()
 async def tree(self, ctx):
     await ctx.send(embed=self.tree_embed)
 

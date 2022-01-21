@@ -82,3 +82,5 @@ models = [
     [Servers, ServersSchema],
     [RivenSettings, RivenSettingsSchema]
 ]
+
+

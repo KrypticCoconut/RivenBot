@@ -28,6 +28,7 @@ class SqlCache(aobject):
         self.table = table
         self.table_name = table.__tablename__
         
+        
         for column in table.__table__.columns:
             if(column.primary_key):
                 self.primary_key_attr = getattr(self.table, column.name) #i think im dumb
@@ -38,6 +39,8 @@ class SqlCache(aobject):
         self.tail = Node(0, 0)
         self.head.next = self.tail # connect head to teal
         self.tail.prev = self.head
+        
+        self.main.inject_globals(self.table.__tablename__, self)
 
     async def get_row(self, primary_key: int, root = None, conf = None):
         # root indicates the starting table containing the primary key linking it to other tables in case a new one needs to be created
@@ -59,7 +62,8 @@ class SqlCache(aobject):
             setattr(obj, cache.primary_key_attr.name, primary_key) 
             
             await self.queue.add(self.sqlapi.add_obj, [obj])
-            await self.queue.add(self.sqlapi.expire, [obj]) # expire object sdo the next get_conf dont pull the child tables
+            await self.main.all_loggers["database"][0].debug("Added row with primary key {} in table {} - {}".format(primary_key, root, conf))
+            await self.queue.add(self.sqlapi.expire, [obj]) # expire object so the next get_conf doesnt pull the child tables
             result = await self.get_row(primary_key)
             # It isnt worth calculating table from object, if given a complex root, calculation cost is much more expensive than just querying once
             return result
@@ -131,7 +135,19 @@ class SqlCache(aobject):
             await self.queue.add(self.sqlapi.add_obj, [self.sqlapi.serialize_dict(conf, self.table_name)])
             
             await self.main.all_loggers["database"][0].debug("Added row with primary key {} in table {} - {}".format(primary_key, self.table_name, conf))
-                
+    
+    async def commit_all(self):
+        current = self.head.next
+          
+        while current is not self.tail:
+            await self.remove(current)
+            await self.commit(current)
+            del self.cache[current.key]
+            current = current.next   
+            
+    
+            
+            
 class SqlCacheParent(aobject):
     async def __init__(self, main):
         self.main = main
@@ -150,6 +166,12 @@ class SqlCacheParent(aobject):
         # print(row)
         # row = await self.caches["rivensettings"].get_row(7, root="rivensettings", conf={"server_id": 7})
         # print(row)
+        
+    async def closing_func(self):
+        for cache in self.caches.values():
+            await cache.commit_all()
+        
+        
 
 MOD = SqlCacheParent
 NAME = "sqlcache"
