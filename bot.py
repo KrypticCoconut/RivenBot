@@ -174,7 +174,7 @@ class Main(object):
     
     async def attach_prefix(self):
         async def get_prefix(ctx, message):
-            conf = await self.caches["servers"].get_row(message.guild.id, "servers")
+            conf = await self.caches["servers"].get_row(message.guild.id, "servers", conf={})
             prefix = conf["prefix"]
             if(not prefix):
                 prefix = ctx.user.mention
@@ -190,7 +190,7 @@ class Main(object):
         async def on_ready():
             await self.primary.debug("Bot started")
         
-        setup(main) # initialize dpy object for cog loading
+        setup(self) # initialize dpy object for cog loading
         
         await self.load_modules(mod_dir)
         await self.load_cogs(cog_dir, None)
@@ -205,10 +205,8 @@ class Main(object):
                     command.globals[name] = object
         del self.injects
         
-        
-        # print(self.client.on_ready)
-        await self.client.start(main.config["token"])
 
+        await self.client.start(self.config["token"])
     
         
     def inject_globals(self, name, object):

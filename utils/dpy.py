@@ -13,17 +13,35 @@ class TaskManager(object):
         
         self.startup_funcs = []
         self.start_funcs_called = False
+        
+        self.closing_funcs = []
+        
         self.instance = None
         
+        
+        
         self.get_start_funcs()
+        # self.get_close_funcs()
         self.wrap_new()
-    
+
+        
+
     def get_start_funcs(self):
         for attr in dir(self.cog):
             attr = getattr(self.cog, attr, None)
             if(res := getattr(attr, "init_func", None)):
                 if(res):
                     self.startup_funcs.append(attr)
+                    
+        if(not self.startup_funcs):
+            self.start_funcs_called = True
+
+    def get_close_funcs(self):
+        for attr in dir(self.cog):
+            attr = getattr(self.cog, attr, None)
+            if(res := getattr(attr, "close_func", None)):
+                if(res):
+                    self.closing_funcs.append(attr)
 
     def wrap_new(self):
         og = self.cog.__new__

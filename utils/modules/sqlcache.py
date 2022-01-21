@@ -3,6 +3,8 @@ from linecache import cache
 from logging import root
 import re
 from tkinter import N
+from traceback import print_tb
+from models import RivenSettings
 from utils.misc import aobject
 import asyncio
 from sqlalchemy.future import select
@@ -37,22 +39,6 @@ class SqlCache(aobject):
         self.head.next = self.tail # connect head to teal
         self.tail.prev = self.head
 
-    def _get_relationship_from_root(self, obj, table, target_table, pkey): # not worth using
-        if(table.__tablename__ == target_table):
-            if(isinstance(obj, list)):
-                for o in obj:
-                    for column in table.__table__.columns:
-                        if(column.primary_key):
-                            self.primary_key_attr = getattr(self.table, column.name)
-                return obj
-        for name, relationship in inspect(table).relationships.items():
-            inst_relation = getattr(obj, name)
-            
-            res = self._get_relationship_from_root(inst_relation, relationship.mapper.class_, target_table, pkey)
-            if(res):
-                return res
-        return None
-
     async def get_row(self, primary_key: int, root = None, conf = None):
         # root indicates the starting table containing the primary key linking it to other tables in case a new one needs to be created
         if(primary_key in self.cache.keys()):
@@ -64,15 +50,17 @@ class SqlCache(aobject):
         results = await self.queue.add(self.sqlapi.query_obj, [stmt]) 
         result  = results.scalars().first()
         if(not result):
-            if(not root):
+            if(not root or conf is None):
                 return None
-            if(not conf):
-                obj = await self.build_object(primary_key, root=root)
-            else:
-                obj = await self.sqlapi.serialize_dict(conf, root)
+            
+            
+            obj = await self.sqlapi.serialize_dict(conf, root)
+            cache = self.parent.caches[root]
+            setattr(obj, cache.primary_key_attr.name, primary_key) 
+            
             await self.queue.add(self.sqlapi.add_obj, [obj])
             await self.queue.add(self.sqlapi.expire, [obj]) # expire object sdo the next get_conf dont pull the child tables
-            result = await self.get_row(primary_key, root, conf)
+            result = await self.get_row(primary_key)
             # It isnt worth calculating table from object, if given a complex root, calculation cost is much more expensive than just querying once
             return result
                     
@@ -113,22 +101,7 @@ class SqlCache(aobject):
         p = node.prev
         n = node.next
         p.next = n
-        n.prev = p
-    
-    async def build_object(self, primary_key, root = None, curr_table=None): # terrible attempt at auto building, should never be used
-        if(not curr_table):
-            curr_table = self.sqlapi.tables[root]
-        kwargs = {}
-        for column in curr_table.__table__.columns:
-            if(column.primary_key):
-                kwargs[column.name] = primary_key
-        
-        for name, relationship in inspect(curr_table).relationships.items():
-            if(not relationship.uselist): # ill deal with lists later, but for this specific case, i probably wont need them
-                kwargs[name] = await self.build_object(primary_key, curr_table=relationship.mapper.class_)
-        
-            
-        return curr_table(**kwargs)
+        n.prev = p  
 
     async def commit(self, node):
         primary_key = node.key
@@ -173,12 +146,10 @@ class SqlCacheParent(aobject):
             
             self.caches[table.__tablename__] = await SqlCache(self.main, table, self, cachelen = table.cachelen)
         
-        # conf = {'server_id': 7, 'rivensettings': {'server_id': 7, 'notify': False}, 'prefix': None}
-        # row = await self.caches["servers"].get_row(7, "servers", conf)
+        # row = await self.caches["servers"].get_row(7, root="servers", conf={})
         # print(row)
-        # await self.caches["servers"].get_row(1)
-        # await self.caches["servers"].get_row(2) 
-
+        # row = await self.caches["rivensettings"].get_row(7, root="rivensettings", conf={"server_id": 7})
+        # print(row)
 
 MOD = SqlCacheParent
 NAME = "sqlcache"

@@ -54,7 +54,7 @@ class Servers(Base):
     __tablename__ = "servers"
     cachelen = 2
     server_id = Column(BigInteger, primary_key=True, nullable=False)
-    prefix = Column(String(4), nullable=True, default=None)
+    prefix = Column(String(4), nullable=True, default="!")
     rivensettings = relationship("RivenSettings", uselist=False, lazy="noload") # use .options(selectinload(Servers.rivensettings)) to load relation
     
     
