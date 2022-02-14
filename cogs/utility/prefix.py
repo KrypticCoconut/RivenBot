@@ -20,13 +20,13 @@ async def prefix(self, ctx, *args):
         embed=discord.Embed(title="Prefix needs to be lower than 3 characters", color=discord.Color.red())
         await ctx.send(embed=embed)
         return
-    row = await servers.get_row(primary_key=ctx.guild.id, root="servers", conf={})
+    message = ctx.message
+    row = await servers.get_row(primary_key=ctx.guild.id, root="servers", conf={"server_id": message.guild.id})
     oldprefix = row["prefix"]
     row["prefix"] = prefix
-    
+
     embed=discord.Embed(title="Changed prefix!", description="`{}` => `{}`\nBot will always respond on ping".format(oldprefix, prefix), color=discord.Color.green())
     await ctx.send(embed=embed)
 
-    
 COMMAND = prefix
 GLOBALS = globals()

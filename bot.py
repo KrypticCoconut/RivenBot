@@ -177,7 +177,7 @@ class Main(object):
     async def attach_prefix(self):
 
         async def get_prefix(ctx, message):
-            conf = await self.caches["servers"].get_row(message.guild.id, "servers", conf={})
+            conf = await self.caches["servers"].get_row(message.guild.id, "servers", conf={"server_id": message.guild.id})
             prefix =  commands.when_mentioned(ctx, message) + [conf["prefix"]]
             return prefix
         
@@ -257,3 +257,4 @@ class Main(object):
 if __name__ == "__main__":
     main = Main("config.json")
     asyncio.run(main.start("cogs", "utils/modules"))
+
