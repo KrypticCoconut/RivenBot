@@ -4,7 +4,7 @@ from utils.dpy import setuphelper
 import discord
 
 
-@setuphelper.helpargs(name="prefix", desc="!prefix")
+@setuphelper.helpargs(name="prefix", desc="used to change prefix", usage="!prefix <newprefix> // changes pefix to <newprefix>")
 @setuphelper.attach_blocker
 @setuphelper.notifier
 @commands.command()
@@ -28,5 +28,9 @@ async def prefix(self, ctx, *args):
     embed=discord.Embed(title="Changed prefix!", description="`{}` => `{}`\nBot will always respond on ping".format(oldprefix, prefix), color=discord.Color.green())
     await ctx.send(embed=embed)
 
+
+
+
 COMMAND = prefix
 GLOBALS = globals()
+SETUPFUNCS = []

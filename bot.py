@@ -95,7 +95,9 @@ class Main(object):
             cog = module.COG
             cog_globals = module.GLOBALS
         except AttributeError:
-            return False, True, "'cog' or 'cog_globals' are not declared in '{}'".format(main)
+            return False, True, "root command variables are not declared in '{}'".format(main)
+        
+
         
         command_objs = []
         for command_p in commands:
@@ -105,9 +107,13 @@ class Main(object):
             try:
                 command = module.COMMAND
                 command_globals = module.GLOBALS
+                class_attrs = module.CLASS_ATTRS
             except AttributeError:
-                self.primary.debug("Unable to load module '{}', 'command' or 'command_globals' not declared".format(command_p))
+                self.primary.debug("Unable to load command '{}' root vars not declared".format(command_p))
                 continue
+            
+            for attr in class_attrs:
+                setattr(cog, attr.__name__, attr)
             cog.__cog_commands__.append(command)
             command_obj = Command(command, command_globals)
             command_objs.append(command_obj)
@@ -120,15 +126,16 @@ class Main(object):
         return True, False, cog_obj
     
     async def load_cogs(self, cog_dir, parent):
-        self.cog_dir = os.path.join(self.pwd, cog_dir)
-        for folder in os.listdir(self.cog_dir):
-            p = os.path.join(self.cog_dir, folder)
+        for folder in os.listdir(cog_dir):
+            p = os.path.join(cog_dir, folder)
             if(os.path.isdir(p) and folder != "__pycache__"):
+                # print(p)
                 ret = await self.load_cog(p, parent)
                 if(not ret[0] and ret[1]):
                     self.primary.debug(ret[2])
                 if(ret[0]):
-                    await self.load_cogs(p, ret[2])
+                    # print("here")
+                    await self.load_cogs(p, ret[2]) # tf this breaks stuff no
                     
         self.cogs_loaded = True
     
@@ -201,7 +208,7 @@ class Main(object):
                 
         
     async def start(self, cog_dir, mod_dir):
-        client = commands.Bot(command_prefix=None) # None is temp
+        client = commands.Bot(command_prefix=None, help_command=None) # None is temp
         self.client = client
         
         @self.client.event
@@ -210,8 +217,9 @@ class Main(object):
         
         self.setup_helper = setup(self) # initialize dpy object for cog loading
         
+        self.cog_root = cog_dir
         await self.load_modules(mod_dir)
-        await self.load_cogs(cog_dir, None)
+        await self.load_cogs(os.path.join(self.pwd, cog_dir), None)
         
         await self.attach_prefix()
          
@@ -222,6 +230,7 @@ class Main(object):
                 for command in cog.commands:
                     command.globals[name] = object
         del self.injects
+        
         
         try:
             await self.client.start(self.config["token"])
@@ -248,7 +257,7 @@ class Main(object):
         ret += "-"*l + "\n"
         div = int((l-len(text))/2)
         ret += "-"*div + text + "-"*div + "\n"
-        ret += "-"*l 
+        ret += "-"*l
         return ret
     
         
