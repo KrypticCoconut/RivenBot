@@ -53,9 +53,26 @@ class SqlCache(aobject):
         self.tail = Node(0, 0)
         self.head.next = self.tail # connect head to teal
         self.tail.prev = self.head
+    
+    async def add_row(self, primary_key, conf):
+        stmt = select(self.table).where(self.primary_key_attr == primary_key)
+        await self.lock.acquire()
+        async with self.session.begin():
+            results = await self.session.execute(stmt)
+        self.lock.release()
+        result  = results.scalars().first()
         
-
-    async def get_row(self, primary_key, root = None, conf = None, cache = True):
+        if(not result):
+            obj = await self.sqlapi.serialize_dict(conf, self.table.__tablename__)
+            
+            await self.lock.acquire()
+            async with self.session.begin():
+                self.session.add(obj)
+            self.lock.release()
+    
+        
+        
+    async def get_row(self, primary_key, conf = None, cache = True):
         # root indicates the starting table containing the primary key linking it to other tables in case a new one needs to be created
         if(self.cachelen == 0):
             cache = False
@@ -72,21 +89,26 @@ class SqlCache(aobject):
 
     
         result  = results.scalars().first()
+        
+        # The problem with this root solution is that i currently do not know a way to compute it to use previously created foreign key dependencies
+        # it will instead just always create new dependencies even if older one exists resulting in a foreign key exists collision
+        # and even if there is a way to compute that i doubt its more efficient/faster than just querying the db for previous stuff
+        # computing previous stuff requires querying the database and just manually doing that will be faster i think
         if(not result):
-            if(not root or conf is None):
-                
+            if(conf is None):
+
                 return None
-            
-            
-            obj = await self.sqlapi.serialize_dict(conf, root)
+
+
+            obj = await self.sqlapi.serialize_dict(conf, self.table.__tablename__)
             
             await self.lock.acquire()
             async with self.session.begin():
                 self.session.add(obj) # immediately add the obj because we dont want failing dependencies from other tables, theres probably a better way to deal with this but im lazy
             self.lock.release()
             
-            await self.main.all_loggers["database"][0].debug("Added row with primary key {} in table {} - {}".format(primary_key, root, conf))
-            result = await self.get_row(primary_key, cache)
+            await self.main.all_loggers["database"][0].debug("Added row with primary key {} in table {} - {}".format(primary_key, self.table.__tablename__, conf))
+            result = await self.get_row(primary_key, cache=cache)
 
             # It isnt worth calculating table from object, if given a complex root, calculation cost is much more expensive than just querying once
             return result
@@ -153,7 +175,6 @@ class SqlCache(aobject):
                 cval = getattr(result, name)
                 nval = conf[name]
                 
-                
                 cdict[name]  = cval
                 ndict[name] = nval
                 
@@ -208,8 +229,14 @@ class SqlCacheParent(aobject):
         # print(rows)
         
         
+        servers = self.caches["servers"]
+        rivensettings = self.caches["rivensettings"]
+        customcommands = self.caches["customcommands"]
+        # row = await servers.get_row(1234, root="servers", conf={"server_id": 1234, "customcommands": [{"command_id": "1234_commanda", "name": "commanda", "text": "some a text", "creator": 2345, "server_id": 1234}] } )
         
-        # row = await self.caches["servers"].get_row(2, root="servers", conf={"server_id": 2})
+        
+        # row = await customcommands.get_row("1234_commandb", root="servers", conf={"server_id": 1234, "customcommands": [{"command_id": "1234_commandb", "name": "commandb", "text": "some b text", "creator": 2345, "server_id": 1234}] } )
+        # row = await self.caches["rivensettings"].get_row(880654721197674588, root="servers", conf={"server_id": 880654721197674588, "rivensettings": {"server_id": 880654721197674588, "notify": True}})
         # stmt = select(self.caches["servers"].table).where(self.caches["servers"].table.server_id == 2)
         # rows = await self.get_rows(stmt)
 

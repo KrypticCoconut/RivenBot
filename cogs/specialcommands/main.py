@@ -1,5 +1,7 @@
 
+from sys import prefix
 from discord.ext import commands
+from cogs.utility.help import setup_help
 from utils.dpy import setuphelper
 import discord
 import asyncio
@@ -12,6 +14,38 @@ class SpecialCommands(aobject, commands.Cog):
     async def __init__(self, client, main, **kwargs):
         self.client = client
         self.main = main
+        
+    @setuphelper.cog_start_func
+    async def wrap_on_message(self):
+        og = self.main.client.on_message
+        
+        async def wrapper(*args, **kwargs):
+            await og(*args, **kwargs)
+            
+            ctx = args[0]
+            id = ctx.guild.id
+            message = ctx.content
+            
+            found = False
+            for prefix in await self.client.command_prefix(self.client, ctx):
+                if(message.startswith(prefix)):
+                    found = True
+                    break
+            if(not found):
+                return
+            
+            command = message[len(prefix):].split(" ")[0]
+            p_key = "{}_{}".format(id, command)
+            row = await customcommands.get_row(p_key)
+            print(row)
+            if(row):
+                await ctx.channel.send(row["text"])
+            
+                    
+            
+        self.main.client.on_message = wrapper
+            
+        
 
 COG = SpecialCommands
 GLOBALS = globals()

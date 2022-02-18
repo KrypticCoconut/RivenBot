@@ -16,12 +16,12 @@ async def prefix(self, ctx, *args):
     prefix = args[0]
     if(prefix.lower() == "none"):
         prefix = None
-    elif(len(prefix) > 4):
-        embed=discord.Embed(title="Prefix needs to be lower than 3 characters", color=discord.Color.red())
+    elif(len(prefix) > 100):
+        embed=discord.Embed(title="Prefix needs to be shprter than 4 characters", color=discord.Color.red())
         await ctx.send(embed=embed)
         return
     message = ctx.message
-    row = await servers.get_row(primary_key=ctx.guild.id, root="servers", conf={"server_id": message.guild.id})
+    row = await servers.get_row(primary_key=ctx.guild.id, conf={"server_id": message.guild.id})
     oldprefix = row["prefix"]
     row["prefix"] = prefix
 

@@ -184,7 +184,7 @@ class Main(object):
     async def attach_prefix(self):
 
         async def get_prefix(ctx, message):
-            conf = await self.caches["servers"].get_row(message.guild.id, "servers", conf={"server_id": message.guild.id})
+            conf = await self.caches["servers"].get_row(message.guild.id, conf={"server_id": message.guild.id})
             prefix =  commands.when_mentioned(ctx, message) + [conf["prefix"]]
             return prefix
         
