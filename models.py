@@ -46,8 +46,8 @@ from types import MethodType
 
 class RivenSettings(Base):
     __tablename__ = "rivensettings"
-    __cache__ = True
     cachelen = 2
+    cache_nulls = False
     server_id = Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True, nullable=False)
     notify = Column(Boolean, nullable=False, default=False)
 
@@ -56,11 +56,11 @@ class RivenSettings(Base):
 
 class Servers(Base):
     __tablename__ = "servers"
-    __cache__ = True
     cachelen = 2
+    cache_nulls = True
     server_id = Column(BigInteger, primary_key=True, nullable=False)
     prefix = Column(String(4), nullable=True, default="!")
-    rivensettings = relationship("RivenSettings", uselist=False, lazy="noload") # use .options(selectinload(Servers.rivensettings)) to load relation
+    rivensettings = relationship("RivenSettings", uselist=False, lazy="noload", backref="parent") # use .options(selectinload(Servers.rivensettings)) to load relation
     
     
 
@@ -115,7 +115,8 @@ for weapon_type, valid_attrs in types.items(): # Some stats are broken but its w
     table_attrs = {
         "__tablename__": weapon_type + "_rivens",
         "__name__": weapon_type,
-        "__cache__": False,
+        "cachelen": 0,
+        "cache_nulls": False,
         "bid_id": Column(VARCHAR(300), primary_key=True, nullable=False, autoincrement=False)
     }
 

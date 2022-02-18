@@ -5,14 +5,6 @@ from treelib import Node, Tree
 from io import StringIO
 import sys
 
-@setuphelper.helpargs(name="tree", desc="tree view of all commands", usage="!tree")
-@setuphelper.attach_blocker
-@setuphelper.notifier
-@commands.command()
-async def tree(self, ctx):
-    await ctx.send(embed=self.tree_embed)
-
-
 def create_list(cogs, tree, parent=None):
     for cog in cogs:
         tree.create_node(cog.name, cog.name, parent=parent)
@@ -31,7 +23,8 @@ def get_tree(self):
         if(cog.parent == None):
             starts.append(cog)
     t = Tree()
-    t = create_list(starts, t)
+    t.create_node(self.main.config["botname"],self.main.config["botname"])
+    t = create_list(starts, t, self.main.config["botname"])
     
     old_stdout = sys.stdout
     sys.stdout = mystdout = StringIO()
@@ -41,10 +34,21 @@ def get_tree(self):
     val = mystdout.getvalue()
     return val.rstrip().lstrip()
 
+@setuphelper.cog_start_func
 async def setup_tree(self):
     tree = get_tree(self)
-    self.tree_embed = embed=discord.Embed(title="Tree view of commands", description="```\n{}\n```".format(tree))
+    self.tree_embed =discord.Embed(title="Tree view of commands", description="```\n{}\n```".format(tree))
     
+    
+@setuphelper.helpargs(name="tree", desc="tree view of all commands", usage="!tree")
+@setuphelper.attach_blocker
+@setuphelper.notifier
+@commands.command()
+async def tree(self, ctx):
+    await ctx.send(embed=self.tree_embed)
+
+
+
 COMMAND = tree
 GLOBALS = globals()
-SETUPFUNCS = [setup_tree]
+CLASS_ATTRS = [setup_tree]

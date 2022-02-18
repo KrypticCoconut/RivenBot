@@ -1,4 +1,16 @@
 
+# caching only supports primary key search because search by when youre trying to search using a query the previous cache objects ion the queue are not yet commited so the query will not account those
+# so to query you need max uptime on the database
+# when youre searching using pkey, there is only one possible occurence, so its easy to handle, you cant make 2 queries for the same pkey and get 2 different results, then i can just cache that pkey and its row and keep querying that
+# when searching using a query tho, there can be multiple occurences for a single obj, for example
+# i first "select from servers where id == 1234"
+# then change "notify" from false to true
+# then i query "select from servers where notify == true"
+# but the result from the first and second queries might still be in the cache and not committed to the database thus the query will never account those 
+# this isnt a problem with pkey querying because youre only pulling in {key:value} format
+# but this problem doesnt exist with add-delete databases
+# also if you think i didnt try caching queries, i did, theres just insane # of data redundancies, even with read-write database
+
 from traceback import print_tb
 
 from urllib3 import Retry
@@ -34,11 +46,8 @@ class SqlCache(aobject):
             if(column.primary_key):
                 self.primary_key_attr_str = column.name
                 self.primary_key_attr = getattr(self.table, column.name) #i think im dumb
-        self.cache_enabled = table.__cache__
-        if(self.cache_enabled):
-            self.cachelen = table.cachelen
-        else:
-            self.cachelen = 0
+        self.cachelen = table.cachelen
+        self.cachenulls = table.cache_nulls #bro idfk im too lazy to implement this yet
         self.cache = dict()
         self.head = Node(0, 0) # initialize hidden and and start of linked list
         self.tail = Node(0, 0)
@@ -48,8 +57,9 @@ class SqlCache(aobject):
 
     async def get_row(self, primary_key, root = None, conf = None, cache = True):
         # root indicates the starting table containing the primary key linking it to other tables in case a new one needs to be created
-        
-        if(self.cache_enabled and cache):
+        if(self.cachelen == 0):
+            cache = False
+        if( cache):
             if(primary_key in self.cache.keys()):
                 await self.llist(primary_key)
                 return self.cache[primary_key]
@@ -64,6 +74,7 @@ class SqlCache(aobject):
         result  = results.scalars().first()
         if(not result):
             if(not root or conf is None):
+                
                 return None
             
             
@@ -82,7 +93,7 @@ class SqlCache(aobject):
         
         
         conf  = await self.sqlapi.deserialize_object(result)
-        if(self.cache_enabled and cache):
+        if(cache):
             if(len(self.cache) >= self.cachelen):
                 node = self.head.next
                 await self.commit(node)

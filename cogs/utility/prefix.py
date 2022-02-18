@@ -33,4 +33,4 @@ async def prefix(self, ctx, *args):
 
 COMMAND = prefix
 GLOBALS = globals()
-SETUPFUNCS = []
+CLASS_ATTRS = []
