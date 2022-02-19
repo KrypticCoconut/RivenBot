@@ -25,17 +25,21 @@ async def addc(self, ctx, *args):
 
     row = await customcommands.get_row(primary_key=pkey)
     if(row):
-        await ctx.send(embed=discord.Embed(title="Command '{}' already exists".format(-1 *(500 - len(pkey))), color=discord.Color.red()))
+        await ctx.send(embed=discord.Embed(title="Command '{}' already exists".format(name), color=discord.Color.red()))
         return
     
     config = {
         "server_id": ctx.guild.id,
-        "customcommands": {
-            "command_id": pkey,
-            "name": name,
-            "text": text,
-            "creator": ctx.author.id,
-            "server_id": ctx.guild.id
+        "customcommandssettings": {
+            "server_id": ctx.guild.id,
+            "everyone_addc": True,
+            "customcommands": {
+                "command_id": pkey,
+                "name": name,
+                "text": text,
+                "creator": ctx.author.id,
+                "server_id": ctx.guild.id
+            }
         }
     }
 
