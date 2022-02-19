@@ -11,6 +11,10 @@
 # but this problem doesnt exist with add-delete databases
 # also if you think i didnt try caching queries, i did, theres just insane # of data redundancies, even with read-write database
 
+from os import readlink
+from re import L, T
+from telnetlib import PRAGMA_HEARTBEAT
+from tkinter.tix import Tree
 from traceback import print_tb
 
 from urllib3 import Retry
@@ -55,24 +59,73 @@ class SqlCache(aobject):
         self.tail.prev = self.head
     
     async def add_row(self, primary_key, conf):
+
         stmt = select(self.table).where(self.primary_key_attr == primary_key)
         await self.lock.acquire()
         async with self.session.begin():
             results = await self.session.execute(stmt)
         self.lock.release()
         result  = results.scalars().first()
-        
         if(not result):
-            obj = await self.sqlapi.serialize_dict(conf, self.table.__tablename__)
+                obj = await self.sqlapi.serialize_dict(conf, self.table.__tablename__)
+                await self.lock.acquire()
+                async with self.session.begin():
+                    self.session.add(obj)
+                self.lock.release()
+                
+                await self.main.all_loggers["database"][0].debug("Added row with primary key {} in table {} - {}".format(primary_key, self.table.__tablename__, conf))
+   
+    async def add_tree_conf(self, tree_conf, curr_table, edit):
+        cache = self.parent.caches[curr_table]
+        table = cache.table
+        pkey_attr = cache.primary_key_attr_str
+        
+        pkey = tree_conf[pkey_attr]
+        curr_conf = {}
+        
+        
+        for column in table.__table__.columns:
+            if(column.name in tree_conf.keys()):
+                curr_conf[column.name] = tree_conf[column.name]
+                
+        
+        
+        
+        if(edit):
+            conf = await cache.get_row(pkey, conf = curr_conf, cache=False)
             
-            await self.lock.acquire()
-            async with self.session.begin():
-                self.session.add(obj)
-            self.lock.release()
-    
+            old = False
+            for attr in conf.keys():
+                if(attr in curr_conf.keys()):
+                    if(not curr_conf[attr] == conf[attr]): # the new conf was not the one used, the old one was used
+                        old = True
+                        conf[attr] = curr_conf[attr]
+
+            if(old):
+                cdict, ndict = await cache.change_row(pkey, conf, pkey=True)
+                await self.main.all_loggers["database"][0].debug("Changed row with primary key {} in table {} from {} to {}".format(pkey, table.__tablename__, cdict, ndict))
+        else:
+            await cache.add_row(pkey, curr_conf)
+            
+            
+        for name, relationship in inspect(table).relationships.items():
+            if(name in tree_conf.keys()):
+                attr = tree_conf[name]
+                tablename = relationship.target.name
+                
+                # print(dir(relationship))
+                if(isinstance(attr, list)):
+                    for _attr in attr:
+                        await self.add_tree_conf(_attr, tablename, edit=edit)
+                else:
+                    await self.add_tree_conf(attr, tablename, edit=edit)
+                        
+            # print(name, relationship)
         
         
-    async def get_row(self, primary_key, conf = None, cache = True):
+        
+    async def get_row(self, primary_key, conf = None, root = None, edit_non_root = False,cache = True, debug = False):
+        await self.main.all_loggers["database"][0].debug("Requested from table {} for primary key {}, cache = {}, conf = {}, root = {}, edit_non_root = {}".format(self.table_name, primary_key, cache, conf, root, edit_non_root))
         # root indicates the starting table containing the primary key linking it to other tables in case a new one needs to be created
         if(self.cachelen == 0):
             cache = False
@@ -98,20 +151,28 @@ class SqlCache(aobject):
             if(conf is None):
 
                 return None
-
-
-            obj = await self.sqlapi.serialize_dict(conf, self.table.__tablename__)
             
-            await self.lock.acquire()
-            async with self.session.begin():
-                self.session.add(obj) # immediately add the obj because we dont want failing dependencies from other tables, theres probably a better way to deal with this but im lazy
-            self.lock.release()
+            if(root is None):
+                obj = await self.sqlapi.serialize_dict(conf, self.table.__tablename__)
+                await self.lock.acquire()
+                async with self.session.begin():
+                    self.session.add(obj) # immediately add the obj because we dont want failing dependencies from other tables, theres probably a better way to deal with this but im lazy
+                self.lock.release()
+                
+                await self.main.all_loggers["database"][0].debug("Added row with primary key {} in table {} - {}".format(primary_key, self.table.__tablename__, conf))
+                result = await self.get_row(primary_key, cache=cache)
+                # It isnt worth calculating table from object, if given a complex root, calculation cost is much more expensive than just querying once
+                if(debug): return result, True
+                return result
+            else:
+                
+                await self.add_tree_conf(conf, root, edit = edit_non_root)
+                result = await self.get_row(primary_key, cache=cache)
+                if(debug): return result, True
+                return result, True
+            return
             
-            await self.main.all_loggers["database"][0].debug("Added row with primary key {} in table {} - {}".format(primary_key, self.table.__tablename__, conf))
-            result = await self.get_row(primary_key, cache=cache)
 
-            # It isnt worth calculating table from object, if given a complex root, calculation cost is much more expensive than just querying once
-            return result
         
         
         conf  = await self.sqlapi.deserialize_object(result)
@@ -126,6 +187,8 @@ class SqlCache(aobject):
             self.cache[primary_key] = conf
             node = Node(primary_key, conf)
             await self.add(node)
+            
+        if(debug): return conf, False
         return conf
         
     async def llist(self, primary_key):
@@ -155,6 +218,28 @@ class SqlCache(aobject):
         p.next = n
         n.prev = p  
 
+    async def change_row(self, result, conf, pkey=False):
+        if(pkey):
+            stmt = select(self.table).where(self.primary_key_attr == result)
+            result = await self.session.execute(stmt)
+            result = result.scalars().first()
+        cdict = {}
+        ndict = {}
+        for column in self.table.__table__.columns:
+            name = column.name
+            cval = getattr(result, name)
+            nval = conf[name]
+            
+            cdict[name]  = cval
+            ndict[name] = nval
+            
+            setattr(result, name, nval)
+        
+        await self.session.commit()
+        
+        return cdict, ndict
+        
+
     async def commit(self, node):
         primary_key = node.key
         conf = node.val
@@ -167,23 +252,10 @@ class SqlCache(aobject):
         
         result = result.scalars().first()
         if(result):
-            
-            cdict = {}
-            ndict = {}
-            for column in self.table.__table__.columns:
-                name = column.name
-                cval = getattr(result, name)
-                nval = conf[name]
-                
-                cdict[name]  = cval
-                ndict[name] = nval
-                
-                setattr(result, name, nval)
             await self.lock.acquire()
-            await self.session.commit()
+            cdict, ndict = await self.change_row(result, conf)
             self.lock.release()
             await self.main.all_loggers["database"][0].debug("Changed row with primary key {} in table {} from {} to {}".format(primary_key, self.table_name, cdict, ndict))
-                
         else:
             await self.lock.acquire()
             async with self.session.begin():
@@ -213,12 +285,13 @@ class SqlCacheParent(aobject):
         main.caches = self.caches
         
         for table in list(main.sqlapi.tables.values()):
+
             if(getattr(table, "hidden", None)):
                 continue
             cache = await SqlCache(self.main, table, self)
             self.caches[table.__tablename__] = cache
+
             self.main.inject_globals(table.__tablename__, cache)
-        
         
         self.main.inject_globals("get_rows", self.get_rows)
         
@@ -232,8 +305,11 @@ class SqlCacheParent(aobject):
         servers = self.caches["servers"]
         rivensettings = self.caches["rivensettings"]
         customcommands = self.caches["customcommands"]
-        # row = await servers.get_row(1234, root="servers", conf={"server_id": 1234, "customcommands": [{"command_id": "1234_commanda", "name": "commanda", "text": "some a text", "creator": 2345, "server_id": 1234}] } )
+        # row = await customcommands.get_row("1234_commanda", root="servers", conf={"server_id": 1234, "customcommands": [{"command_id": "1234_commanda", "name": "commanda", "text": "some a text", "creator": 2345, "server_id": 1234}] } )
+        # print(row)
         
+        # row = await customcommands.get_row("1234_commandb", root="servers", conf={"server_id": 1234, "prefix": "$", "customcommands": [{"command_id": "1234_commandb", "name": "commandb", "text": "some b text", "creator": 4567, "server_id": 1234}] }, edit_non_root=True )
+        # print(row)
         
         # row = await customcommands.get_row("1234_commandb", root="servers", conf={"server_id": 1234, "customcommands": [{"command_id": "1234_commandb", "name": "commandb", "text": "some b text", "creator": 2345, "server_id": 1234}] } )
         # row = await self.caches["rivensettings"].get_row(880654721197674588, root="servers", conf={"server_id": 880654721197674588, "rivensettings": {"server_id": 880654721197674588, "notify": True}})

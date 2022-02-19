@@ -1,3 +1,4 @@
+from linecache import cache
 from discord.ext import commands
 from utils.dpy import setuphelper
 import discord
@@ -14,29 +15,31 @@ async def addc(self, ctx, *args):
     name = args[0]
     text = ' '.join(ctx.message.content.split(" ")[2:])
     pkey = "{}_{}".format(ctx.guild.id, name)
+    
+    if(name in self.commands):
+        await ctx.send(embed=discord.Embed(title="Predifined command with name {} already exists, please use another name".format(name), color=discord.Color.red()))
+        return
     if(len(pkey) > 500):
         await ctx.send(embed=discord.Embed(title="Command name must be shorter by {} characters".format(-1 *(500 - len(pkey))), color=discord.Color.red()))
         return
-    
+
     row = await customcommands.get_row(primary_key=pkey)
     if(row):
         await ctx.send(embed=discord.Embed(title="Command '{}' already exists".format(-1 *(500 - len(pkey))), color=discord.Color.red()))
         return
     
-    fallback = { # create base server id in case one has not been created already
-        "server_id": ctx.guild.id
+    config = {
+        "server_id": ctx.guild.id,
+        "customcommands": {
+            "command_id": pkey,
+            "name": name,
+            "text": text,
+            "creator": ctx.author.id,
+            "server_id": ctx.guild.id
+        }
     }
-    base_server_id = await servers.add_row(ctx.guild.id, conf=fallback)
 
-    main_config = {
-        "command_id": pkey,
-        "name": name,
-        "text": text,
-        "creator": ctx.author.id,
-        "server_id": ctx.guild.id
-    }
-    
-    await customcommands.get_row(primary_key = pkey, conf=main_config)
+    result = await customcommands.get_row(primary_key = pkey, conf=config, root="servers")
     await ctx.send(embed=discord.Embed(title="Successfully added command '{}'!".format(name), color=discord.Color.green()))
 
 

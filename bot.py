@@ -3,6 +3,7 @@ import json
 import os
 import importlib
 from pydoc import cli
+import re
 from sys import prefix
 
 import discord
@@ -184,6 +185,8 @@ class Main(object):
     async def attach_prefix(self):
 
         async def get_prefix(ctx, message):
+            if(message.author.bot):
+                return []
             conf = await self.caches["servers"].get_row(message.guild.id, conf={"server_id": message.guild.id})
             prefix =  commands.when_mentioned(ctx, message) + [conf["prefix"]]
             return prefix
