@@ -17,16 +17,25 @@ class RivenSettings(Base):
     __tablename__ = "rivensettings"
     cachelen = 100
     cache_nulls = False
+    readonly = False
     server_id = Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True, nullable=False)
     notify = Column(Boolean, nullable=False, default=False)
 
 class CustomCommandsRoles(Base):
-    __tablename__ = "customcommands"
+    __tablename__ = "customcommandsroles"
+    cachelen = 3
+    cache_nulls = False
+    readonly = True
+    server_id =  Column(BigInteger, ForeignKey("customcommandssettings.server_id"), nullable=False)
+    role_id = Column(BigInteger, nullable=False, primary_key=True)
+    addc = Column(Boolean, nullable=False, default=False)
+    delc = Column(Boolean, nullable=False, default=False)
 
 class CustomCommands(Base):
     __tablename__ = "customcommands"
     cachelen = 0
     cache_nulls = False
+    readonly = False
     command_id = Column(VARCHAR(500), primary_key=True, nullable=False) # Please understand my position
     name = Column(VARCHAR(500), nullable=False) # fuck data redundancy
     text = Column(VARCHAR(2000), nullable=False)
@@ -38,15 +47,17 @@ class CustomCommandsSettings(Base):
     __tablename__ = "customcommandssettings"
     cachelen = 100
     cache_nulls = False
-    
+    readonly = False
     server_id = Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, primary_key=True)
     customcommands = relationship("CustomCommands", uselist=True, lazy="noload")
     everyone_addc = Column(Boolean, nullable=False, default=True)
+    customcommandsroles = relationship("CustomCommandsRoles", uselist=True, lazy="noload")
 
 class Servers(Base):
     __tablename__ = "servers"
-    cachelen = 100
+    cachelen = 2
     cache_nulls = False
+    readonly = False
     server_id = Column(BigInteger, primary_key=True, nullable=False)
     prefix = Column(String(4), nullable=True, default="!")
     rivensettings = relationship("RivenSettings", uselist=False, lazy="noload") # use .options(selectinload(Servers.rivensettings)) to load relation
@@ -64,6 +75,16 @@ class CustomCommandsSchema(Schema):
     @post_load
     def make_user(self, data, **kwargs):
         return CustomCommands(**data)
+
+class CustomCommandsRolesSchema(Schema):
+    server_id =  fields.Int()
+    role_id = fields.Int()
+    addc = fields.Boolean()
+    delc = fields.Boolean()
+    
+    @post_load
+    def make_user(self, data, **kwargs):
+        return CustomCommandsRoles(**data)
 
 class CustomCommandsSettingsSchema(Schema):
     server_id = fields.Int()
@@ -107,7 +128,8 @@ models = [
     [Servers, ServersSchema()],
     [RivenSettings, RivenSettingsSchema()],
     [CustomCommandsSettings, CustomCommandsSettingsSchema()],
-    [CustomCommands, CustomCommandsSchema()]
+    [CustomCommands, CustomCommandsSchema()],
+    [CustomCommandsRoles, CustomCommandsRolesSchema()]
 ] 
 
 # rivensettings = RivenSettings(notify = False, server_id = 1)

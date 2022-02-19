@@ -26,14 +26,20 @@ from sqlalchemy.inspection import inspect
 import sqlalchemy
 
 class Node:
-    def __init__(self, key, val):
+    def __init__(self, key, val, pkey=True):
         self.key = key  # key can be primary key
         self.val = val # val can be value
         self.next = None
         self.prev = None
+        self.pkey = pkey
         
-        
-        
+class ValueHolder:
+    def __init__(self, val, pkey, null) -> None:
+        self.val  = val
+        self.pkey = pkey
+        self.null = null
+        self.reference_nodes = []
+    
 class SqlCache(aobject):
     async def __init__(self, main, table, parent) -> None:
         self.main = main
@@ -52,6 +58,9 @@ class SqlCache(aobject):
                 self.primary_key_attr = getattr(self.table, column.name) #i think im dumb
         self.cachelen = table.cachelen
         self.cachenulls = table.cache_nulls #bro idfk im too lazy to implement this yet
+        self.readonly = table.readonly
+        
+        self.query_cache = dict()
         self.cache = dict()
         self.head = Node(0, 0) # initialize hidden and and start of linked list
         self.tail = Node(0, 0)
@@ -66,6 +75,7 @@ class SqlCache(aobject):
             results = await self.session.execute(stmt)
         self.lock.release()
         result  = results.scalars().first()
+        
         if(not result):
                 obj = await self.sqlapi.serialize_dict(conf, self.table.__tablename__)
                 await self.lock.acquire()
@@ -79,7 +89,7 @@ class SqlCache(aobject):
         cache = self.parent.caches[curr_table]
         table = cache.table
         pkey_attr = cache.primary_key_attr_str
-        
+
         pkey = tree_conf[pkey_attr]
         curr_conf = {}
         
@@ -124,33 +134,62 @@ class SqlCache(aobject):
         
         
         
-    async def get_row(self, primary_key, conf = None, root = None, edit_non_root = False,cache = True, debug = False):
+    async def get_row(self, primary_key, conf = None, root = None, edit_non_root = False,cache = True):
         await self.main.all_loggers["database"][0].debug("Requested from table {} for primary key {}, cache = {}, conf = {}, root = {}, edit_non_root = {}".format(self.table_name, primary_key, cache, conf, root, edit_non_root))
         # root indicates the starting table containing the primary key linking it to other tables in case a new one needs to be created
+        
+        if(isinstance(primary_key, sqlalchemy.sql.Select)):
+            if(not self.readonly):
+                raise Exception("Attempt at querieng objects in non-readonly table {}".format(self.table_name))
+            stmt = primary_key
+            primary_key = stmt.compile(compile_kwargs={"literal_binds": True}).string
+            single_res = False
+        else:
+            stmt = select(self.table).where(self.primary_key_attr == primary_key)
+            single_res = True
+            
+            
         if(self.cachelen == 0):
             cache = False
         if( cache):
-            if(primary_key in self.cache.keys()):
-                await self.llist(primary_key)
-                return self.cache[primary_key]
-        stmt = select(self.table).where(self.primary_key_attr == primary_key)
+            if(single_res):
+                if(primary_key in self.cache.keys()):
+                    print("out of el")
+                    valholder = self.cache[primary_key]
+                    for node in valholder.reference_nodes:
+                        await self.remove(node)
+                        await self.add(node)
+                    return self.cache[primary_key].val
+                
+                # await self.remove(node)
+                # await self.add(node)
+            else:
+                if(primary_key in self.query_cache.keys()):
+                    for valholder in self.query_cache[primary_key]: # <<< This is so data redundant but i have less than 4 braincells to think about this
+                        for node in valholder.reference_nodes:
+                            await self.remove(node)
+                            await self.add(node)
+                            
+                    print("out of pl")
+                    return map(lambda x: x.val, self.query_cache[primary_key])
+                
         
         await self.lock.acquire()
         async with self.session.begin():
             results = await self.session.execute(stmt)
         self.lock.release()
 
-    
-        result  = results.scalars().first()
+        result  = results.scalars().all()
         
-        # The problem with this root solution is that i currently do not know a way to compute it to use previously created foreign key dependencies
-        # it will instead just always create new dependencies even if older one exists resulting in a foreign key exists collision
-        # and even if there is a way to compute that i doubt its more efficient/faster than just querying the db for previous stuff
-        # computing previous stuff requires querying the database and just manually doing that will be faster i think
         if(not result):
+            if(not single_res):
+                # IMPLEMENT CACHE NULLS HERE
+                if not self.cachenulls: return None
+                
+            # only single res out from here
             if(conf is None):
-
-                return None
+                # IMPLEMENT CACHE NULLS HERE
+                if not self.cachenulls: return None
             
             if(root is None):
                 obj = await self.sqlapi.serialize_dict(conf, self.table.__tablename__)
@@ -162,49 +201,77 @@ class SqlCache(aobject):
                 await self.main.all_loggers["database"][0].debug("Added row with primary key {} in table {} - {}".format(primary_key, self.table.__tablename__, conf))
                 result = await self.get_row(primary_key, cache=cache)
                 # It isnt worth calculating table from object, if given a complex root, calculation cost is much more expensive than just querying once
-                if(debug): return result, True
                 return result
             else:
                 
                 await self.add_tree_conf(conf, root, edit = edit_non_root)
                 result = await self.get_row(primary_key, cache=cache)
-                if(debug): return result, True
-                return result, True
+                return result
             return
             
 
-        
-        
-        conf  = await self.sqlapi.deserialize_object(result)
-        if(cache):
-            if(len(self.cache) >= self.cachelen):
-                node = self.head.next
-                await self.commit(node)
-                await self.remove(node)
-                del self.cache[node.key]
-            
+        if(single_res):
+            result = result[0]
+            conf  = await self.sqlapi.deserialize_object(result)
+            if(cache):
+                value = ValueHolder(conf, primary_key, False)
+                
+                while (len(self.cache) + len(self.query_cache)) >= self.cachelen:
+                    node = self.head.next
+                    await self.commit(node)
+                    await self.remove(node)
+                    if(node.pkey):
+                        del self.cache[node.key]
+                    else:
+                        del self.query_cache[node.key]
+                
 
-            self.cache[primary_key] = conf
-            node = Node(primary_key, conf)
-            await self.add(node)
-            
-        if(debug): return conf, False
-        return conf
-        
-    async def llist(self, primary_key):
-        current = self.head
-          
-        while True:
-              
-            if current.key == primary_key:
-                node = current
-                await self.remove(node)
+                self.cache[primary_key] = value
+                node = Node(primary_key, value)
+                value.reference_nodes.append(node)
                 await self.add(node)
-                break
-              
-            else:
-                current = current.next    
-
+                
+            return conf
+        else:
+            results = result
+            values = []
+            ret = []
+            append_to_cache = []
+            node = Node(primary_key, values, pkey=False)
+            for result in results:
+                pkey = getattr(result, self.primary_key_attr_str)
+                if(pkey in self.cache.keys()):
+                    val = self.cache[pkey]
+                    
+                    values.append(val)
+                    val.reference_nodes.append(node)
+                    ret.append(val.val)
+                    
+                else:
+                    conf  = await self.sqlapi.deserialize_object(result)
+                    if(cache):
+                        val = ValueHolder(conf, pkey, False)
+                        values.append(val)
+                        append_to_cache.append(val)
+                        val.reference_nodes.append(node)
+                    ret.append(conf)
+            if(cache and len(append_to_cache) + 1 <= self.cachelen):   
+                while (self.cachelen - (len(self.cache) + len(self.query_cache))) < (len(append_to_cache) + 1) :
+                    node = self.head.next
+                    
+                    await self.commit(node)
+                    await self.remove(node)
+                    if(node.pkey):
+                        del self.cache[node.key]
+                    else:
+                        del self.query_cache[node.key]
+                for val in append_to_cache:
+                    self.cache[val.pkey] = val
+                self.query_cache[node.key] = values
+                await self.add(node) 
+            
+            return ret
+                    
     async def add(self, node):
         p = self.tail.prev
         p.next = node
@@ -242,7 +309,22 @@ class SqlCache(aobject):
 
     async def commit(self, node):
         primary_key = node.key
-        conf = node.val
+        valueholder = node.val
+        if(self.readonly):
+            if(not node.pkey):
+                for val in valueholder.val:
+                    val.reference_nodes.remove(node)
+                    if(len(val.reference_nodes) == 0):
+                        del self.cache[valueholder.pkey]
+            else:
+                valueholder.reference_nodes.remove(node)
+                if(len(valueholder.reference_nodes) == 0):
+                    del self.cache[valueholder.pkey]
+                    
+            return
+                    
+        
+        conf = valueholder.val
         # await session.commit()
         stmt = select(self.table).where(self.primary_key_attr == primary_key)
         await self.lock.acquire()
@@ -305,7 +387,45 @@ class SqlCacheParent(aobject):
         servers = self.caches["servers"]
         rivensettings = self.caches["rivensettings"]
         customcommands = self.caches["customcommands"]
-        # row = await customcommands.get_row("1234_commanda", root="servers", conf={"server_id": 1234, "customcommands": [{"command_id": "1234_commanda", "name": "commanda", "text": "some a text", "creator": 2345, "server_id": 1234}] } )
+        customcommandsroles = self.caches["customcommandsroles"]
+        
+        server_id = 1234
+        config = {
+            "server_id": server_id,
+            "customcommandssettings": {
+                "server_id": server_id,
+                "everyone_addc": True,
+                "customcommandsroles": [
+                {
+                    "role_id": 12345678,
+                    "server_id": server_id,
+                    "addc": True,
+                    "delc": True
+                },
+                {
+                    "role_id": 236677,
+                    "server_id": server_id,
+                    "addc": True,
+                    "delc": True
+                }]
+            }
+        }
+
+
+        # await customcommandsroles.add_tree_conf(config, "servers", False)
+        
+        
+        # stmt = select(customcommandsroles.table).where(customcommandsroles.table.server_id == 1234)
+        # rows = await customcommandsroles.get_row(stmt)
+        # print(rows)
+        # print(customcommandsroles.query_cache)
+        # print(customcommandsroles.cache)
+        # rows = await customcommandsroles.get_row(stmt)
+        # rows = await customcommandsroles.get_row(236677)
+        # row["prefix"] = "$"
+        # print(servers.cache)
+        # row = await servers.get_row(2345, root="servers", conf={"server_id": 2345} )
+        # print(servers.cache)
         # print(row)
         
         # row = await customcommands.get_row("1234_commandb", root="servers", conf={"server_id": 1234, "prefix": "$", "customcommands": [{"command_id": "1234_commandb", "name": "commandb", "text": "some b text", "creator": 4567, "server_id": 1234}] }, edit_non_root=True )
