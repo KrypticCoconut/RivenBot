@@ -1,5 +1,6 @@
 [
     "logger",
+    "cache_wrapper_extender",
     "sqlapi",
     "sqlcache"
 ]

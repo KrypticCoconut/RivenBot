@@ -345,6 +345,34 @@ class SetupHelper(object):
         commandcls._callback = wrapper
         return commandcls
     
+    def has_perms(self, perm_method):
+        # method = commandcls._callback
+        def wrapper(commandcls):
+            func_callback = commandcls._callback
+            
+            async def callback_wrapper(self, ctx, *args):
+                member = ctx.author
+                authority = await perm_method(self, ctx)
+                if(authority["everyone"] == True):
+                    await func_callback(self, ctx, *args)
+                    return  
+                if(member.id in authority["users"]):
+                    await func_callback(self, ctx, *args)
+                    return
+                roles = list(map(lambda x: x.id, member.roles))
+                for role in roles:
+                    if(role in authority["roles"]):
+                        await func_callback(self, ctx, *args)
+                        return
+                
+                embed = discord.Embed(title = "Insufficient permissions", color = discord.Color.red())
+
+                await ctx.channel.send(embed=embed)
+            commandcls._callback = callback_wrapper
+            callback_wrapper.__name__ = func_callback.__name__
+            return commandcls
+        return wrapper
+    
     async def call_close_funcs(self):
         await self.main.primary.debug("Running Cog close functions in order")
         for func in self.close_order:
