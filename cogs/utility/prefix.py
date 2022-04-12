@@ -26,7 +26,8 @@ async def get_perms(self, ctx):
 @setuphelper.has_perms(get_perms)
 @commands.command()
 async def prefix(self, ctx, *args):
-    
+    start_time = time.time()
+
     if(not len(args) >= 1):
         embed=discord.Embed(title="Please specify a prefix to change to", color=discord.Color.red())
         await ctx.send(embed=embed)
@@ -45,6 +46,9 @@ async def prefix(self, ctx, *args):
 
     embed=discord.Embed(title="Changed prefix!", description="`{}` => `{}`\nBot will always respond on ping".format(oldprefix, prefix), color=discord.Color.green())
     await ctx.send(embed=embed)
+    
+    print("--- %s seconds ---" % (time.time() - start_time))
+
 
 
 

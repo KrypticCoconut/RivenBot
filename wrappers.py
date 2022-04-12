@@ -11,11 +11,10 @@ class Holder():
             Holder.all.append([name, method, needs_main])
         return good_code
 
-@Holder.wrapper("asasa", True)
+@Holder.wrapper("servers", True)
 async def users_wrapper(main):
     async def confirmer(oldpkey, newpkey):
         async def wrapper(cache, before, after, keys_changed):
-            print(before, after)
             await main.all_loggers["changes"][0].debug("{}: {} -> {} {}".format(cache.table_name, before, after, keys_changed))
             log_path = None
             if(after == {}):
@@ -31,8 +30,8 @@ async def users_wrapper(main):
             if(not channel):
                 await main.sqlcache.caches["servers"][after[cache.primary_key_attr_str]].change("log_path", None) 
                 return
-            embed=discord.Embed(title="Cache update", color=discord.Color.greyple(), description = "`{}`: ```{}``` -> ```{}```".format(cache.table_name, before, after))
-            await channel.send(embed = embed)
+            # embed=discord.Embed(title="Cache update", color=discord.Color.greyple(), description = "`{}`: ```{}``` -> ```{}```".format(cache.table_name, before, after))
+            # await channel.send(embed = embed)
 
         # pkey = None
         
