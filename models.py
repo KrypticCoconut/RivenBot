@@ -1,80 +1,27 @@
-import re
-from turtle import title
-from sqlalchemy.orm import declarative_base
-from sqlalchemy import VARCHAR, Column, null, table
-from sqlalchemy import Boolean
-from sqlalchemy import DateTime
-from sqlalchemy import ForeignKey
-from sqlalchemy import Integer
-from sqlalchemy import String
-from sqlalchemy import BigInteger
-from sqlalchemy.orm import relationship, backref
-from marshmallow import Schema, fields, post_load
-import requests
 
-Base = declarative_base()
+import asyncio
 
-class RivenSettings(Base):
-    __tablename__ = "rivensettings"
-    cachelen = 100
-    cache_nulls = False
-    readonly = False
-    server_id = Column(BigInteger, ForeignKey("servers.server_id"), primary_key=True, nullable=False)
-    notify = Column(Boolean, nullable=False, default=False)
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import ForeignKey, Table, Column, Integer, String, MetaData, BigInteger, Boolean
+from sqlalchemy.future import select
+from sqlalchemy import insert, delete, update
+from sqlalchemy.inspection import inspect
+from marshmallow import fields, Schema
 
-class CustomCommandsRoles(Base):
-    __tablename__ = "customcommandsroles"
-    cachelen = 0
-    cache_nulls = False
-    readonly = True
-    server_id =  Column(BigInteger, ForeignKey("customcommandssettings.server_id"), nullable=False)
-    role_id = Column(BigInteger, nullable=False, primary_key=True)
-    addc = Column(Boolean, nullable=False, default=False)
-    delc = Column(Boolean, nullable=False, default=False)
+meta = MetaData()
 
-class ModeratorRoles(Base):
-    __tablename__ = "moderatorroles"
-    cachelen = 0
-    cache_nulls = False
-    readonly = True
-    server_id =  Column(BigInteger, ForeignKey("servers.server_id"), nullable=False)
-    role_id = Column(BigInteger, nullable=False, primary_key=True)
 
-class CustomCommands(Base):
-    __tablename__ = "customcommands"
-    cachelen = 0
-    cache_nulls = False
-    readonly = False
-    command_id = Column(VARCHAR(500), primary_key=True, nullable=False) # Please understand my position
-    name = Column(VARCHAR(500), nullable=False) # fuck data redundancy
-    text = Column(VARCHAR(2000), nullable=False)
-    creator = Column(BigInteger, nullable=False) 
-    server_id = Column(BigInteger, ForeignKey("customcommandssettings.server_id"), nullable=False)
-    
+# ==========================================================================
 
-class CustomCommandsSettings(Base):
-    __tablename__ = "customcommandssettings"
-    cachelen = 100
-    cache_nulls = False
-    readonly = False
-    server_id = Column(BigInteger, ForeignKey("servers.server_id"), nullable=False, primary_key=True)
-    customcommands = relationship("CustomCommands", uselist=True, lazy="noload")
-    everyone_addc = Column(Boolean, nullable=False, default=True)
-    customcommandsroles = relationship("CustomCommandsRoles", uselist=True, lazy="noload")
-
-class Servers(Base):
-    __tablename__ = "servers"
-    cachelen = 1
-    cache_nulls = False
-    readonly = False
-    server_id = Column(BigInteger, primary_key=True, nullable=False)
-    log_id = Column(BigInteger, nullable=True)
-    prefix = Column(String(4), nullable=True, default="!")
-    logging_channel = Column(BigInteger, primary_key=False, nullable=True, default=None)
-    rivensettings = relationship("RivenSettings", uselist=False, lazy="noload") # use .options(selectinload(Servers.rivensettings)) to load relation
-    
-    customcommandssettings = relationship("CustomCommandsSettings", uselist=False, lazy="noload")
-    moderatorroles = relationship("ModeratorRoles", uselist=True, lazy="noload")
+CustomCommands = Table(
+    'customcommands', meta,
+    Column('command_id', String(500), primary_key=True, nullable=False),
+    Column('name', String(500), nullable=False),
+    Column('text', String(2000), nullable=False),
+    Column('creator', BigInteger, nullable=False),
+    Column('server_id', BigInteger, ForeignKey("customcommandssettings.server_id"), nullable=False)
+)
+CustomCommands.cachelen = 100    
 
 class CustomCommandsSchema(Schema):
     command_id = fields.String()
@@ -82,59 +29,84 @@ class CustomCommandsSchema(Schema):
     text = fields.String()
     server_id = fields.Int()
     creator = fields.Int()
-    
-    @post_load
-    def make_user(self, data, **kwargs):
-        return CustomCommands(**data)
+
+# ==========================================================================
+
+
+CustomCommandsSettings = Table(
+    'customcommandssettings', meta,
+    Column('server_id', BigInteger, ForeignKey("servers.server_id"), nullable=False, primary_key=True),
+    Column('everyone_addc', Boolean, nullable=False, default=True)
+)
+CustomCommandsSettings.cachelen = 100    
+
+class CustomCommandsSettingsSchema(Schema):
+    server_id = fields.Int()
+    everyone_addc = fields.Boolean()
+
+# ==========================================================================
+
+CustomCommandsRoles = Table(
+    'customcommandsroles', meta,
+    Column('server_id', BigInteger, ForeignKey("customcommandssettings.server_id"), nullable=False),
+    Column('role_id', BigInteger, nullable=False, primary_key=True),
+    Column('addc', Boolean, nullable=False, default=False),
+    Column('delc', Boolean, nullable=False, default=False)
+)
+CustomCommandsRoles.cachelen = 0
+
 
 class CustomCommandsRolesSchema(Schema):
     server_id =  fields.Int()
     role_id = fields.Int()
     addc = fields.Boolean()
     delc = fields.Boolean()
-    
-    @post_load
-    def make_user(self, data, **kwargs):
-        return CustomCommandsRoles(**data)
-    
-    
+
+# ==========================================================================    
+
+ModeratorRoles = Table(
+    'moderatorroles', meta,
+    Column('server_id', BigInteger, ForeignKey("servers.server_id"), nullable=False),
+    Column('role_id', BigInteger, nullable=False, primary_key=True)
+)
+ModeratorRoles.cachelen = 0
+
 class ModeratorRolesSchema(Schema):
     server_id =  fields.Int()
     role_id = fields.Int()
-    
-    @post_load
-    def make_user(self, data, **kwargs):
-        return ModeratorRoles(**data)
 
-class CustomCommandsSettingsSchema(Schema):
-    server_id = fields.Int()
-    everyone_addc = fields.Boolean()
-    customcommands = fields.List(fields.Nested(CustomCommandsSchema))
-    
-    @post_load
-    def make_user(self, data, **kwargs):
-        return CustomCommandsSettings(**data)
+# ==========================================================================    
+
+RivenSettings = Table(
+    'rivensettings', meta,
+    Column('server_id', BigInteger, ForeignKey("servers.server_id"), primary_key=True, nullable=False),
+    Column('notfy', Boolean, nullable=False, default=False)
+)
+RivenSettings.cachelen = 100
 
 class RivenSettingsSchema(Schema):
     server_id = fields.Int()
     notify = fields.Boolean()
-    
-    @post_load
-    def make_user(self, data, **kwargs):
-        return RivenSettings(**data)
-    
+
+# ==========================================================================
+
+Servers = Table(
+    'servers', meta,
+    Column('server_id', BigInteger, primary_key=True, nullable=False),
+    Column('log_id', BigInteger, nullable=True),
+    Column('prefix', String(4), nullable=True, default="!")
+)
+Servers.cachelen = 100
+
 class ServersSchema(Schema):
     server_id = fields.Int()
     prefix = fields.Str(allow_none=True)
-    rivensettings = fields.Nested(RivenSettingsSchema)
-    customcommandssettings = fields.Nested(CustomCommandsSettingsSchema)
     log_id = fields.Int()
-    
-    
-    @post_load
-    def make_user(self, data, **kwargs):
-        return Servers(**data)
-   
+
+# ==========================================================================
+
+
+
 models = [
     [Servers, ServersSchema()],
     [RivenSettings, RivenSettingsSchema()],
@@ -216,43 +188,33 @@ models = [
 # Testing schemas!
 # ====================================================================================================================================================================
 
-# class Users(Base):
-#     cachelen = 1
-#     cache_nulls = False
-#     readonly = False
-#     __tablename__ = 'users'
-#     name = Column(String(50), primary_key=True)
-#     age = Column(Integer())
-    
+# users = Table(
+#     'users', meta,
+#     Column('name', String, primary_key=True),
+#     Column('age', Integer),
+# )
+# users.cachelen = 0
+
     
 # class UsersSchema(Schema):
 #     name = fields.String()
 #     age = fields.Int()
     
-#     @post_load
-#     def make_user(self, data, **kwargs):
-#         return Users(**data)
-    
-    
+# blogs = Table(
+#     'blogs', meta,
+#     Column('title', String, primary_key=True),
+#     Column('author_name', String , ForeignKey("users.name")),
 
-# class Blogs(Base):
-#     cachelen = 2
-#     cache_nulls = False
-#     readonly = False
-#     __tablename__ = 'blogs'
-#     title = Column(String(50), primary_key=True)
-#     author_name = Column(String(50), ForeignKey("users.name"))
-#     author = relationship("Users", uselist=False, backref="blogs")
+# )
+# blogs.cachelen = 0
+
+
 
 # class BlogsSchema(Schema):
 #     title = fields.String()
 #     author_name = fields.String()
     
-#     @post_load
-#     def make_user(self, data, **kwargs):
-#         return Blogs(**data)
-    
 # models = [
-#     [Users, UsersSchema()],
-#     [Blogs, BlogsSchema()]
+#     [users, UsersSchema()],
+#     [blogs, BlogsSchema()]
 # ]

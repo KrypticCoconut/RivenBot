@@ -1,6 +1,8 @@
 
 from asyncore import read
+import re
 from turtle import update
+from types import TracebackType
 from utils.misc import aobject
 import asyncio
 from sqlalchemy import delete
@@ -25,47 +27,61 @@ class ValueHolder:
 # change_wrapper - called when a change in the cache or runtime_function occurs, it should be used to notify the user of runtime cache changes that apply globally 
 class SqlCacheParent(aobject):
 
-    async def add_tree_conf(self, tree_conf, curr_table, edit=False):  # add a conf from a given root, should be used a very low level
+    async def add_tree_conf(self, tree_conf, curr_table, target_table, target_pkey, edit=False):  # add a conf from a given root, should be used a very low level
         cache = self.caches[curr_table]
         table = cache.table
         pkey_attr = cache.primary_key_attr_str
 
         pkey = tree_conf[pkey_attr]
         curr_conf = {}
-        
-        
-        for column in table.__table__.columns:
+
+        for column in table.columns: # pull columns for current table from the tree conf
             if(column.name in tree_conf.keys()):
                 curr_conf[column.name] = tree_conf[column.name]
         
         if(edit):
-            conf = await cache.get_row(pkey, conf = curr_conf, cache=False)
+            _conf = await cache.get_row(pkey, conf = curr_conf, cache=False)
+            conf = _conf.curr_dict
             old = False
             for attr in conf.keys():
                 if(attr in curr_conf.keys()):
                     if(not curr_conf[attr] == conf[attr]): # the new conf was not the one used, the old one was used
                         old = True
                         conf[attr] = curr_conf[attr]
+                        
             if(old):
                 if(isinstance(cache, NoCache)):
-                    await cache._update_row(pkey, conf, pkey=True)
+                    await _conf.update()
                 elif(isinstance(cache, Cache)):
                     pass
+            conf = _conf
                 
         else:
-            await cache.add_conf(curr_conf)
-            
-            
-        for name, relationship in inspect(table).relationships.items():
+            conf = await cache.get_row(curr_conf[pkey_attr], conf=curr_conf)
+        
+        pkey = conf[pkey_attr]
+        ret_conf = conf
+        if((not pkey == target_pkey) or (not cache.table_name == target_table)):
+            ret_conf = None
+        
+                
+        
+        for name, table in self.main.sqlapi.tables.items():
             if(name in tree_conf.keys()):
                 attr = tree_conf[name]
-                tablename = relationship.target.name
-                
                 if(isinstance(attr, list)):
                     for _attr in attr:
-                        await self.add_tree_conf(_attr, tablename, edit=edit)
+                        ret = await self.add_tree_conf(_attr, name, target_table, target_pkey, edit=edit)
+                        if(ret):
+                            ret_conf = ret
+
                 else:
-                    await self.add_tree_conf(attr, tablename, edit=edit)
+                    ret = await self.add_tree_conf(attr, name, target_table, target_pkey, edit=edit)
+                    if(ret):
+                        ret_conf = ret
+                        
+        return ret_conf
+                    
     
     async def closing_func(self):
         for cache in self.caches.values():
@@ -75,7 +91,6 @@ class SqlCacheParent(aobject):
     async def __init__(self, main):
         self.main = main
         self.sqlapi = self.main.sqlapi
-        self.session = self.sqlapi.session
         self.lock = self.sqlapi.lock
         self.caches = {}
         main.caches = self.caches
@@ -85,15 +100,14 @@ class SqlCacheParent(aobject):
             if(getattr(table, "hidden", None)):
                 continue
             cachelen = table.cachelen
-            readonly = table.readonly
             if(cachelen == 0):
                 cache = await NoCache(self.main, table, self)
             else:
-                cache = await Cache(self.main, table, self)
-                # cache = Cache(self.main, table. self)
-            self.caches[table.__tablename__] = cache
 
-            self.main.inject_globals(table.__tablename__, cache)
+                cache = await Cache(self.main, table, self)
+            self.caches[table.name] = cache
+
+            self.main.inject_globals(table.name, cache)
         
         
         
@@ -101,49 +115,30 @@ class SqlCacheParent(aobject):
         # users = self.caches["users"]
         # blogs = self.caches["blogs"]
 
-        # # ------------ GETTING ------------ 
+        # # # ------------ GETTING ------------ 
         # name1 = await users.get_row("name1", conf= {"name": "name1", "age": 12}, root = "users")
         # name2 = await users.get_row("name2", conf= {"name": "name2", "age": 12}, root = "users")
        
-        # blog = await blogs.get_row("sqlalchemy sucks", conf = {"name": "name1", "age": 4, "blogs": {"title": "sqlalchemy sucks", "author_name": "name1"}}, root = "users", edit=True)
-        # # edit changes age 12 to 4, if edit = false then it can only add rows, not edit
+        # blog = await blogs.get_row("sqlalchemy sucks", conf = {"name": "name1", "age": 4, "blogs": {"title": "sqlalchemy sucks", "author_name": "name1"}}, root = "users")
         
-        # stmt = select(users.table).where(users.table.age == 4)
-        # print(await users.get_row(stmt))
-        # # ------------ UPDATING ------------ 
-        # blog["title"] =  "sqlalchemy is good nvm" # even pkey works
-        # await blog.update()
+        # await blog.delete()
         
-        # # ALTERNATIVE
-        # # blog["title"] = "sqlalchemy is good nvm"
-        # # await blogs._update_row(blog.original["title"], blog, pkey=True, change_wrapper=True)
-        
-        
-        # name2["name"] = "name3" # you can change pkeys
-        # await name2.update()
-        
-        # # ------------ DELETING ------------
-        
-        # await name2.delete()
-        
-        # ALTERNATIVE
-        # stmt = select(users.table).where(users.table.name == "name3")
-        # await users.del_row(stmt)
-        
-        # -----------------------------------------------------
-        # ------------------------ END ------------------------ 
-        # -----------------------------------------------------
-        
-        
+        # name1["name"] = 'name1changed'
+        # await name1.update()
+
         # ------------------------- example usage of cache databases -----------------------------
+        #assumes cahclen 1 for bpth tables
         # users = self.caches["users"]
         # blogs = self.caches["blogs"]
         
-        # name1 = await users.get_row("name1", conf= {"name": "name1", "age": 12}, root = "users")
-        # await name1.change("name", "name3")
-        # name2 = await users.get_row("name2", conf= {"name": "name2", "age": 12}, root = "users")
+        # name1 = await users.get_row("name1", conf= {"name": "name1", "age": 12, "blogs": {'author_name': 'name1', 'title': 'test'}}, root = "users")
+        # blog = await blogs.get_row("test")
+        # name2 = await users.get_row("name2", conf = {"name": "name2", "age": 12})
+        # await name2.change('name', "name2_changed")
+        # name1 = await users.get_row("name1")
         
-        # print(users.cache)
+        # await blog.delete()
+        
         
 MOD = SqlCacheParent
 NAME = "sqlcache"

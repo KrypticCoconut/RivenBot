@@ -2,263 +2,231 @@
 from distutils.command.config import config
 import re
 from sys import prefix
+from traceback import print_tb
 from types import NoneType
 from unittest.mock import patch
 from utils.misc import aobject
 import asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, true, insert, update
 from sqlalchemy.future import select
 from sqlalchemy.inspection import inspect
 import sqlalchemy
+import copy
 
-class dict_wrapper(dict):
-    def __init__(self, *args, **kwargs) -> None:
-        self.last_commit = args[0]
-        self.cache = kwargs["cache"]
-        self.session = self.cache.session
+class dict_wrapper:
+    def __init__(self, old_dict, cache, main) -> None:
+        self.cache = cache
+        self.engine = self.cache.engine
         self.pkey_attr = self.cache.primary_key_attr_str
-        self.main = kwargs["main"]
+        self.main = main
         self.change_wrapper = self.cache.change_wrapper
-        dict.__init__(self, self.last_commit)
+        self.cached = False
+        self.old_dict = old_dict
+        self.curr_dict = copy.deepcopy(old_dict)
         
+        
+    def __getitem__(self, key):
+        return self.curr_dict[key]
+    
+    def __setitem__(self, key, val):
+        self.curr_dict[key] = val
+    
+    def __delitem__(self, key):
+        del self.curr_dict[key]
+    
     async def change(self, key, value):            
-        old = dict(self) # inneficient af
-        self[key] = value
-        
-        if(self.change_wrapper):
-            payload= await self.change_wrapper(old[self.pkey_attr], self[self.pkey_attr])
-            if(payload): await payload(self.cache, old, self, [])        
+        old = copy.deepcopy(self.curr_dict)
+        self.curr_dict[key] = value
+        if(key == self.pkey_attr and self.cached): # if cached and pkey is changed, change name in cache
+            node  = self.cache.cache[old[self.pkey_attr]]
+            node.key = value
+            del self.cache.cache[old[self.pkey_attr]]
+            self.cache.cache[value] = node
+        if(self.change_wrapper): await self.change_wrapper.update(old, self.curr_dict)
+
     async def delete(self):
-        await self.cache.del_row(self.last_commit[self.pkey_attr])
-
-class DoesNotExist():
-    pass
-
+        await self.cache.del_row(self[self.pkey_attr])
 
 class Node:
-    def __init__(self, key, val, pkey=True):
-        self.key = key  # key can be primary key
-        self.val = val # val can be value
+    def __init__(self, key, val):
+        self.key = key 
+        self.val = val
         self.next = None
         self.prev = None
 
-             
+
 class Cache(aobject):
     async def __init__(self, main, table, parent):
         self.main = main
         self.parent = parent
         self.sqlapi = main.sqlapi
         self.lock = self.sqlapi.lock # locks shouldnt be used at this level
-        self.session = self.sqlapi.session
-
+        self.engine = main.sqlapi.engine
         self.table = table
-        self.table_name = table.__tablename__
-        self.cache_nulls = self.table.cache_nulls
+        self.table_name = table.name
         self.cachelen = self.table.cachelen
 
-        for column in table.__table__.columns:
+        for column in table.columns:
             if(column.primary_key):
                 self.primary_key_attr_str = column.name
-                self.primary_key_attr = getattr(self.table, column.name)        
+                self.primary_key_attr = getattr(self.table.c, column.name)
         
         self.logger = self.main.all_loggers["database"][0]
         self.add_tree_conf = parent.add_tree_conf
         self.change_wrapper = main.cache_wrapper_extender.cache_wrappers.get(self.table_name, None)
-        
+        if(self.change_wrapper):
+            self.change_wrapper.cache = self
         
         self.cache = dict()
-        # a none in the cache means the row does not exist, and is not added
-        # a {} in the cache means the row will be deleted
         
         self.head = Node(0, 0)
         self.tail = Node(0, 0)
         self.head.next = self.tail
         self.tail.prev = self.head
-        
-        
-    async def get_row(self, primary_key, conf = None, root = None, edit = False, **kwargs): # can query using only a primary key
-        
-        if(primary_key in self.cache.keys()):
-            cached = self.cache[primary_key]
-            if(isinstance(cached, DoesNotExist)): # If it a cached none value
-                if(not conf): # same code as if value does not exist
-                    await self.llist_node(primary_key)
-                    return cached
-                if(not root):
-                    await self.llist_node(primary_key)
-                    await self.add_conf(conf, check=False)
-                    
-                    stmt = select(self.table).where(self.primary_key_attr == primary_key)
-                    async with self.session.begin():
-                        results = await self.session.execute(stmt)
-                    result  = self.sqlapi.deserialize_object(results.scalars().first())
-                                        
-                    self.cache[primary_key] = result
-                    return self.cache[primary_key]
-                    
-                else:
-                    await self.add_tree_conf(conf, root, edit=edit)
-
-                    stmt = select(self.table).where(self.primary_key_attr == primary_key)
-                    async with self.session.begin():
-                        results = await self.session.execute(stmt)
-                    result  = self.sqlapi.deserialize_object(results.scalars().first())
-                    
-                    return self.cache[primary_key] # sketchy code
-            else:
-                await self.llist_node(primary_key)
-                return cached
-        
-        stmt = select(self.table).where(self.primary_key_attr == primary_key)
-        async with self.session.begin():
-            results = await self.session.execute(stmt)
-        result  = results.scalars().first()
-        
-        if(not result):
-            if(not conf):
-                if(self.cache_nulls):
-                    self.cache[primary_key] = DoesNotExist()
-                    return self.cache[primary_key]
-                else:
-                    return DoesNotExist()
-            if(not root):
-                await self.add_conf(conf, check=False)
-                result = await self.get_row(primary_key)
-                return result
-            else:
-                await self.add_tree_conf(conf, root, edit=edit)
-                result = await self.get_row(primary_key)
-                return result
-        
-        result = dict_wrapper(await self.sqlapi.deserialize_object(result), main=self.main, cache=self)
-        
+    
+    async def _add_conf_node(self, node): # adds a node to the cache
         if(len(self.cache) >= self.cachelen):
-            node = self.head.next
-            await self.update(node)
-            await self.remove_node(node)
-            del self.cache[node.key]
-        
-        self.cache[primary_key] = result
-        node = Node(primary_key, self.cache[primary_key])
+            _node = self.head.next
+            await self.update(_node)
+            await self.remove_node(_node)
+            del self.cache[_node.key]
+        self.cache[node.key] = node
         await self.add_node(node)
         
-        return self.cache[primary_key]
+        
+    async def get_row(self, primary_key, conf = None, root = None, edit = False, cache= True, **kwargs): # can query using only a primary key
+        
+        if(primary_key in self.cache.keys()):
+            node = self.cache[primary_key]
+            await self.llist_node(node)
+            return node.val
+        
+        stmt = select(self.table).where(self.primary_key_attr == primary_key)
+        async with self.engine.begin() as conn:
+            results = await conn.execute(stmt)
+        obj  = results.first()
+        
+        if(not obj):
+            if(not conf):
+                return None
+            if(not root):
+                result = await self.add_row(conf, check=False)
+                if(cache):
+                    result.cached = True
+                    node = Node(primary_key, result)
+                    await self._add_conf_node(node)
+                return result
+            else:
+                result = await self.add_tree_conf(conf, root, self.table_name, primary_key, edit=edit)
+                if(cache):
+                    result.cached = True
+                    node = Node(primary_key, result)
+                    await self._add_conf_node(node)
+                return result
+        
+        result = dict_wrapper(await self.sqlapi.deserialize_object(obj, tablename= self.table_name), main=self.main, cache=self)
+        if(cache):
+            node = Node(primary_key, result)
+            await self._add_conf_node(node)
+        
+        return result
 
         
         
-    async def add_conf(self, conf, check=True): # check if row exists, if doesnt add config, can be used on a lower level
+    async def add_row(self, conf, check=True): # check if row exists, if doesnt add config, can be used on a lower level
         
         if(check):
             primary_key = conf[self.primary_key_attr_str]
             stmt = select(self.table).where(self.primary_key_attr == primary_key)
             
-            async with self.session.begin():
-                results = await self.session.execute(stmt)
+            async with self.engine.begin() as conn:
+                results = await conn.execute(stmt)
         
-            result = results.scalars().first()
+            result = results.first()
             
             if(result):
-                return
+                return False
         
-        obj = await self.sqlapi.serialize_dict(conf, self.table.__tablename__)
-        async with self.session.begin():
-            self.session.add(obj)
+        stmt = insert(self.table).values(conf).returning(self.table)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(stmt)
             
+        result = result.first()
+        conf = await self.sqlapi.deserialize_object(result, tablename=self.table_name)
         
-        async with self.session.begin():
-            stmt = select(self.table).where(self.primary_key_attr == conf[self.primary_key_attr_str])
-            result = await self.session.execute(stmt)
-            
-        result = result.scalars().first()
-        conf = await self.sqlapi.deserialize_object(result)
-        
-        await self.logger.debug("Added row with primary key {} in table {} with conf {}".format(conf[self.primary_key_attr_str], self.table_name, conf))
+        await self.logger.debug("Added row {} in table {}".format(conf, self.table_name))
         
         
-        if(self.change_wrapper):
-            payload= await self.change_wrapper(None, conf[self.primary_key_attr_str])
-            if(payload): await payload(self, {}, conf, [])
+        if(self.change_wrapper): await self.change_wrapper.add(conf)
+        return dict_wrapper(conf, self, self.main)
 
     # takes pkey as input
-    # if check is enabled it will check if a row already exists
-    async def del_row(self, primary_key, check=True):
+    # retun false if nothing is deleted
+    async def del_row(self, primary_key):
+        prev_conf = None
+        new_conf = None
         if(primary_key in self.cache.keys()):
-            if(self.cache[primary_key] == {}):
-                return
-            if(self.change_wrapper):
-                payload= await self.change_wrapper(primary_key, None)
-                if(payload): await payload(self, self.cache[primary_key], {}, [])
-            self.cache[primary_key] = {}
-            return
-        
-        payload = self.change_wrapper(primary_key)
-        if(payload or check):
-            conf = await self.get_row(primary_key)
-            if(isinstance(conf, DoesNotExist)):
-                return
-            else:
-                self.cache[primary_key] = {}
-                if(payload):
-                    payload= await self.change_wrapper(primary_key, None)
-                    if(payload): await payload(self, self.cache[primary_key], {}, [])
-                return
-
-        else:
-            if(len(self.cache) >= self.cachelen):
-                node = self.head.next
-                await self.update(node)
-                await self.remove_node(node)
-                del self.cache[node.key]
+            node = self.cache[primary_key]
+            new_conf = node.val.curr_dict
+            prev_conf = node.val.old_dict
+            await self.remove_node(node)
+            del self.cache[primary_key]
+            primary_key = prev_conf[self.primary_key_attr_str]
+            
+            stmt = delete(self.table).where(self.primary_key_attr==primary_key)
+            async with self.engine.begin() as conn:
+                await conn.execute(stmt)
                 
-            node = Node(primary_key, {})
-            await self.add_node(node)
-            return
+            if(self.change_wrapper):
+                await self.change_wrapper.delete(new_conf)
+            await self.logger.debug("Deleted row with config {} in table {}".format(prev_conf, self.table_name))
+            return prev_conf, new_conf
+
+        stmt = delete(self.table).where(self.primary_key_attr==primary_key).returning(self.table)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(stmt)
+        
+        result = result.first()
+        if(not result):
+            return False
+        else:
+            prev_conf = await self.sqlapi.deserialize_object(result, tablename=self.table_name)
+            new_conf = prev_conf
+            
+        if(self.change_wrapper): await self.change_wrapper.delete(new_conf)
+        await self.logger.debug("Deleted row with config {} in table {}".format(prev_conf, self.table_name))
+
+        return prev_conf, new_conf
+
+
             
     
     async def update(self, node): # commits node
-        primary_key = node.key
-        conf = node.val
-        
-        if(isinstance(conf, DoesNotExist)):
-            return
-        elif(conf != {}):
-                    
-            stmt = select(self.table).where(self.primary_key_attr == primary_key)
-            async with self.session.begin():
-                result = await self.session.execute(stmt)
-                result = result.scalars().first()
 
-                # we already have access to prev and current configs without extra shit, so we dont need to worry about other stuff
-                
-                primary_key = getattr(result, self.primary_key_attr_str)
-                cdict = {}
-                ndict = {}
-                changed = []
-                for column in self.table.__table__.columns:
-                    name = column.name
-                    cval = getattr(result, name)
-                    nval = conf[name]
-                    
-                    cdict[name]  = cval
-                    ndict[name] = nval
-                    
-                    
-                    if(cval != nval): changed.append(name)
+        async with self.engine.begin() as conn:
 
-                if(changed):
-                    for name in changed:
-                        setattr(result, name, ndict[name])
-                    
-                    await self.logger.debug("Changed row with primary key {} in table {} from {} to {}".format(primary_key, self.table_name, cdict, ndict))
-                    
-
-        else:
-      
-            stmt = delete(self.table).where(self.primary_key_attr == primary_key)
-            async with self.session.begin():
-                await self.session.execute(stmt)
             
-            await self.logger.debug("Deleted row with primary key {} in table {}".format(primary_key, self.table_name))
+
+            cdict = node.val.old_dict
+            ndict = node.val.curr_dict
+
+            changed = []
+            for column in self.table.columns:
+                name = column.name
+                
+                cval = cdict[name]
+                nval = ndict[name]
+                if(cval != nval): changed.append(name)
+
+            if(changed):
+                
+                stmt = update(self.table).where(self.primary_key_attr == cdict[self.primary_key_attr_str]).values(**ndict)
+                async with self.engine.begin() as conn:
+                    await conn.execute(stmt)
+                await self.logger.debug("Changed row from {} to {} in table {}".format(cdict, ndict, self.table_name))
+                
+
+
 
     # ------------------------------------------------------------------------------------------------------------------------------------------------------------
     # CACHE FUNCS
@@ -276,16 +244,7 @@ class Cache(aobject):
         node.prev = p
         node.next = self.tail
         
-    async def llist_node(self, primary_key):
-        current = self.head
-          
-        while True:
-              
-            if current.key == primary_key:
-                node = current
-                await self.remove_node(node)
-                await self.add_node(node)
-                break
-              
-            else:
-                current = current.next    
+    async def llist_node(self, node):
+
+        await self.remove_node(node)
+        await self.add_node(node)
